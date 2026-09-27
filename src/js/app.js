@@ -187,7 +187,7 @@
     App.settings.__dataDir = App.state.appInfo ? App.state.appInfo.dataDir : '';
     applySettingsToDom();
     App.player.applySettings(App.settings);
-    if (opts.rerender !== false && ['settings', 'eq', 'plugins'].includes(App.state.view)) App.render();
+    if (opts.rerender === true && ['settings', 'eq', 'plugins'].includes(App.state.view)) App.render();
     syncOverlays(true);
     return App.settings;
   }
@@ -263,7 +263,7 @@
       case 'settings': el = window.Panels.settings(App); break;
       default: el = window.Views.library(App);
     }
-    el.classList.add('fade-in');
+    el.classList.remove('fade-in');
     host.appendChild(el);
     const vb = host.querySelector('.view-body');
     if (vb && scrollTop) vb.scrollTop = scrollTop;
@@ -347,8 +347,17 @@
       App.player.current.favorite = t.favorite;
       updateFavButton();
     }
-    if (App.state.view === 'favorites' || App.state.view === 'library') App.render();
-    else updateCounts();
+    if (App.state.view === 'favorites') {
+      App.render();                       // 收藏页需要让这一行消失
+    } else {
+      // 其它页面只改这一行的 ♥，不重建整个列表（避免闪烁）
+      const row = document.querySelector(`.track-row[data-id="${id}"]`);
+      if (row) {
+        const fav = row.querySelector('.t-actions button');
+        if (fav) { fav.textContent = t.favorite ? '♥' : '♡'; fav.classList.toggle('fav-on', !!t.favorite); }
+      }
+      updateCounts();
+    }
     U.toast(t.favorite ? '已加入收藏 ♥' : '已取消收藏', 'ok', 1400);
   };
 
@@ -1009,7 +1018,8 @@
     App.engine.setEqGains(next.bands || []);
     App.engine.setPreamp(next.preamp || 0);
     App.engine.setEqEnabled(!!next.enabled);
-    if (App.state.view === 'eq') App.render();
+    // 不做整页重绘：EQ 拖动中重建 DOM 会直接打断拖动，并且画面会闪
+    syncOverlays(false);
   };
   App.setEqBand = function (i, v) {
     App.settings.eq.bands[i] = v;
@@ -1074,7 +1084,9 @@
     App.settings.plugins.enabled = Array.from(enabled);
     await api.settings.set('plugins.enabled', App.settings.plugins.enabled);
     await applyPlugins();
-    if (App.state.view === 'plugins') App.render();
+    // 只更新这一张卡片的高亮，不重建整个插件页（避免闪烁）
+    const card = document.querySelector(`.plugin-card[data-plugin-id="${id}"]`);
+    if (card) card.classList.toggle('on', !!on);
     U.toast(on ? '音效已启用' : '音效已关闭', 'ok', 1200);
   };
   App.setPluginParam = async function (id, key, value) {
@@ -1114,14 +1126,13 @@
     const r = await api.lyrics.toggle(on);
     App.settings.lyrics.desktopEnabled = r.enabled;
     updateQuickButtons();
-    if (App.state.view === 'settings') App.render();
+    // 开关自身已经切换了外观，不需要整页重绘
     syncOverlays(true);
     U.toast(r.enabled ? '桌面歌词已开启' : '桌面歌词已关闭', 'ok', 1400);
   };
   App.lockLyrics = async function (on) {
     await api.lyrics.lock(on);
     App.settings.lyrics.locked = on;
-    if (App.state.view === 'settings') App.render();
   };
   App.pickLyricsMonitor = async function () {
     const info = await api.app.info();
@@ -1339,7 +1350,6 @@
     App.settings.ui.closeToTray = on;
     await api.settings.set('ui.closeToTray', on);
     await api.app.setCloseToTray(on);
-    App.render();
   };
   App.resetSettings = function () {
     U.confirmBox('恢复默认设置', '将恢复所有外观 / 播放 / 歌词 / 快捷键设置（曲库与统计不受影响）。', '恢复默认', async () => {
@@ -1355,7 +1365,8 @@
   App.pickBackground = async function () {
     const r = await api.dialog.pickImage();
     if (r.canceled) return;
-    await saveSettings({ background: { ...App.settings.background, type: 'image', value: r.path } });
+    // 这里需要重绘：背景图片那一行要多出预览缩略图
+    await saveSettings({ background: { ...App.settings.background, type: 'image', value: r.path } }, { rerender: true });
     U.toast('背景已更新', 'ok');
   };
 

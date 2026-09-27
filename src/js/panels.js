@@ -202,6 +202,33 @@
     ]));
     const body = ce('div', { class: 'view-body' });
     const panel = ce('div', { class: 'eq-panel panel' });
+    const EQ_MIN = -12;
+    const EQ_MAX = 12;
+    const bandRefs = [];
+    const preampRef = { inp: null, out: null };
+    const paintFill = (inp) => {
+      const pct = ((Number(inp.value) - EQ_MIN) / (EQ_MAX - EQ_MIN)) * 100;
+      inp.style.setProperty('--fill', `${pct}%`);
+    };
+    const paintFillPreamp = (inp) => {
+      const pct = ((Number(inp.value) - EQ_MIN) / (EQ_MAX - EQ_MIN)) * 100;
+      inp.style.setProperty('--fill', `${pct}%`);
+    };
+
+    // 前置放大：自己拼一个可被预设更新的滑块
+    const preampWrap = ce('div', { class: 'row', style: { flex: 1, gap: '8px', maxWidth: '300px' } });
+    const preampOut = ce('span', { class: 'mono', style: { minWidth: '54px', fontSize: '12px', textAlign: 'right' }, text: `${eqs.preamp} dB` });
+    const preampInp = ce('input', { type: 'range', min: EQ_MIN, max: EQ_MAX, step: 0.5, value: eqs.preamp, style: { flex: 1 } });
+    preampInp.oninput = () => {
+      preampOut.textContent = `${Number(preampInp.value)} dB`;
+      paintFillPreamp(preampInp);
+      app.setEq({ preamp: Number(preampInp.value) });
+    };
+    paintFillPreamp(preampInp);
+    preampWrap.appendChild(preampInp);
+    preampWrap.appendChild(preampOut);
+    preampRef.inp = preampInp;
+    preampRef.out = preampOut;
 
     panel.appendChild(ce('div', { class: 'row', style: { justifyContent: 'space-between' } }, [
       ce('div', { class: 'row' }, [
@@ -210,18 +237,26 @@
       ]),
       ce('div', { class: 'row' }, [
         ce('span', { class: 'muted', style: { fontSize: '12px' }, text: '前置放大' }),
-        slider(-12, 12, 0.5, eqs.preamp, (v) => app.setEq({ preamp: v }), (v) => `${v} dB`),
-        ce('button', { class: 'btn sm', text: '重置', onclick: () => app.setEq({ bands: new Array(10).fill(0), preamp: 0, preset: '默认' }) })
+        preampWrap,
+        (() => {
+          const btn = ce('button', { class: 'btn sm', text: '重置' });
+          btn.onclick = () => {
+            const zero = new Array(10).fill(0);
+            app.setEq({ bands: zero, preamp: 0, preset: '默认' });
+            zero.forEach((v, i) => {
+              const r = bandRefs[i];
+              if (!r) return;
+              r.inp.value = '0'; r.db.textContent = '0.0'; paintFill(r.inp);
+            });
+            preampInp.value = '0'; preampOut.textContent = '0 dB'; paintFillPreamp(preampInp);
+            pl.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c.dataset.preset === '默认'));
+          };
+          return btn;
+        })()
       ])
     ]));
 
     const bandsWrap = ce('div', { class: 'eq-bands' });
-    const EQ_MIN = -12;
-    const EQ_MAX = 12;
-    const paintFill = (inp) => {
-      const pct = ((Number(inp.value) - EQ_MIN) / (EQ_MAX - EQ_MIN)) * 100;
-      inp.style.setProperty('--fill', `${pct}%`);
-    };
     D.EQ_FREQS.forEach((f, i) => {
       const b = ce('div', { class: 'eq-band' });
       const db = ce('div', { class: 'db', text: `${(eqs.bands[i] || 0).toFixed(1)}` });
@@ -244,6 +279,7 @@
       b.appendChild(box);
       b.appendChild(ce('div', { class: `hz${f === 1000 ? ' zero' : ''}`, text: f >= 1000 ? `${f / 1000}k` : String(f) }));
       bandsWrap.appendChild(b);
+      bandRefs.push({ inp, db });
     });
     panel.appendChild(ce('div', { class: 'row', style: { justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--muted)', marginTop: '10px' } }, [
       ce('span', { text: '＋12 dB' }),
@@ -255,18 +291,41 @@
     panel.appendChild(ce('div', { class: 'divider' }));
     panel.appendChild(ce('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '8px' }, text: '预设' }));
     const pl = ce('div', { class: 'preset-list' });
+    // 单击预设时「就地」把 10 个滑块推到位，不重建页面（重建会中断拖动并闪烁）
+    const applyPresetToUi = (bands, preset, preamp) => {
+      bands.forEach((v, i) => {
+        const r = bandRefs[i];
+        if (!r) return;
+        r.inp.value = String(v);
+        r.db.textContent = Number(v).toFixed(1);
+        paintFill(r.inp);
+      });
+      if (typeof preamp === 'number' && preampRef.inp) {
+        preampRef.inp.value = String(preamp);
+        preampRef.out.textContent = `${preamp} dB`;
+        paintFillPreamp(preampRef.inp);
+      }
+      pl.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c.dataset.preset === preset));
+    };
     for (const name of Object.keys(PR.EQ_PRESETS)) {
-      pl.appendChild(ce('button', {
-        class: `chip${eqs.preset === name ? ' on' : ''}`, text: name,
-        onclick: () => app.setEq({ bands: PR.EQ_PRESETS[name].slice(), preset: name })
-      }));
+      const btn = ce('button', { class: `chip${eqs.preset === name ? ' on' : ''}`, text: name, 'data-preset': name });
+      btn.onclick = () => {
+        const bands = PR.EQ_PRESETS[name].slice();
+        app.setEq({ bands, preset: name });
+        applyPresetToUi(bands, name);
+      };
+      pl.appendChild(btn);
     }
     const custom = (app.settings.eq.customPresets || {});
     for (const name of Object.keys(custom)) {
-      pl.appendChild(ce('button', {
-        class: `chip${eqs.preset === name ? ' on' : ''}`, text: `⭐ ${name}`,
-        onclick: () => app.setEq({ bands: custom[name].bands.slice(), preamp: custom[name].preamp || 0, preset: name })
-      }));
+      const btn = ce('button', { class: `chip${eqs.preset === name ? ' on' : ''}`, text: `⭐ ${name}`, 'data-preset': name });
+      btn.onclick = () => {
+        const bands = custom[name].bands.slice();
+        const pre = custom[name].preamp || 0;
+        app.setEq({ bands, preamp: pre, preset: name });
+        applyPresetToUi(bands, name, pre);
+      };
+      pl.appendChild(btn);
     }
     panel.appendChild(pl);
     panel.appendChild(ce('div', { class: 'row', style: { marginTop: '12px', gap: '8px' } }, [
@@ -304,7 +363,7 @@
     const grid = ce('div', { class: 'plugin-grid' });
     for (const p of installed) {
       const isOn = enabled.includes(p.id);
-      const card = ce('div', { class: `plugin-card panel${isOn ? ' on' : ''}` });
+      const card = ce('div', { class: `plugin-card panel${isOn ? ' on' : ''}`, 'data-plugin-id': p.id });
       card.appendChild(ce('div', { class: 'head' }, [
         ce('div', { style: { fontSize: '20px' }, text: catIcon(p.category) }),
         ce('div', { class: 'grow' }, [
@@ -380,7 +439,14 @@
     secA.dataset.sec = 'appearance';
     const themePick = ce('div', { class: 'theme-picker' });
     for (const th of D.THEMES) {
-      const item = ce('div', { class: `theme-item${s.theme === th.id ? ' sel' : ''}`, onclick: () => app.saveSettings({ theme: th.id }) }, [
+      const item = ce('div', {
+        class: `theme-item${s.theme === th.id ? ' sel' : ''}`,
+        onclick: () => {
+          app.saveSettings({ theme: th.id });
+          // 只移动高亮，不重建页面（重建会闪一下）
+          themePick.querySelectorAll('.theme-item').forEach((x) => x.classList.toggle('sel', x === item));
+        }
+      }, [
         ce('div', { class: `pv pv-${th.id}` }), ce('div', { class: 'nm', text: th.name }), ce('div', { class: 'ds', text: th.desc })
       ]);
       themePick.appendChild(item);
@@ -388,16 +454,26 @@
     secA.appendChild(themePick);
     secA.appendChild(ce('div', { class: 'divider' }));
     const accents = ['#7c5cff', '#22d3ee', '#ff5f7e', '#34d399', '#fbbf24', '#f472b6', '#60a5fa', '#a78bfa', '#fb7185', '#14b8a6'];
-    secA.appendChild(setRow('强调色', '主色调 / 高亮色', accents.map((c) => ce('div', { class: `color-dot${s.accent === c ? ' sel' : ''}`, style: { background: c }, onclick: () => app.saveSettings({ accent: c }) }))));
+    const dotEls = [];
+    for (const c of accents) {
+      const dot = ce('div', { class: `color-dot${s.accent === c ? ' sel' : ''}`, style: { background: c } });
+      dot.onclick = () => {
+        app.saveSettings({ accent: c });
+        dotEls.forEach((x) => x.classList.toggle('sel', x === dot));
+      };
+      dotEls.push(dot);
+    }
+    secA.appendChild(setRow('强调色', '主色调 / 高亮色', dotEls));
     secA.appendChild(setRow('次强调色', '渐变第二色', [colorInput(s.accent2, (v) => app.saveSettings({ accent2: v }))]));
     secA.appendChild(setRow('圆角', '整体圆润程度', [slider(0, 32, 1, s.radius, (v) => app.saveSettings({ radius: v }), (v) => `${v}px`)]));
     secA.appendChild(setRow('界面密度', null, [select([{ value: 'compact', label: '紧凑' }, { value: 'cozy', label: '标准' }, { value: 'comfy', label: '宽松' }], s.density, (v) => app.saveSettings({ density: v }))]));
     secA.appendChild(setRow('动态极光背景', '跟随主题色调流动的光晕', [sw(s.animatedBg, (v) => app.saveSettings({ animatedBg: v }))]));
     secA.appendChild(ce('div', { class: 'divider' }));
-    secA.appendChild(setRow('背景类型', '渐变 / 自定义图片 / 纯色', [select([{ value: 'gradient', label: '动态渐变' }, { value: 'image', label: '自定义图片' }, { value: 'color', label: '纯色' }, { value: 'none', label: '无背景' }], s.background.type, (v) => app.saveSettings({ background: { ...s.background, type: v } }))]));
+    // 背景类型/清除背景会改变这一块的 DOM 结构（预览缩略图），需要重绘
+    secA.appendChild(setRow('背景类型', '渐变 / 自定义图片 / 纯色', [select([{ value: 'gradient', label: '动态渐变' }, { value: 'image', label: '自定义图片' }, { value: 'color', label: '纯色' }, { value: 'none', label: '无背景' }], s.background.type, (v) => app.saveSettings({ background: { ...s.background, type: v } }, { rerender: true }))]));
     const bgRow = setRow('背景图片', s.background.value || '未选择', [
       ce('button', { class: 'btn sm', text: '🖼 选择图片', onclick: () => app.pickBackground() }),
-      ce('button', { class: 'btn sm', text: '清除', onclick: () => app.saveSettings({ background: { ...s.background, type: 'gradient', value: '' } }) })
+      ce('button', { class: 'btn sm', text: '清除', onclick: () => app.saveSettings({ background: { ...s.background, type: 'gradient', value: '' } }, { rerender: true }) })
     ]);
     if (s.background.value) {
       const pv = ce('div', { class: 'bg-preview', style: { backgroundImage: `url("${window.aurora.app.bgUrl(s.background.value)}")` } });

@@ -243,5 +243,5 @@ html[data-theme="midnight"] .panel { backdrop-filter: none; }
 .toast.ok { border-color: #34d399; }
 @keyframes toastIn { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
 
-.fade-in { animation: fadeIn .28s var(--ease); }
+/* 整页淡入动画已全局移除：以前每次设置变更都会重建页面并闪一下，很干扰 */
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }

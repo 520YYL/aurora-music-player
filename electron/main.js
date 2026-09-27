@@ -1558,6 +1558,74 @@ function runSmokeTest() {
         if (!smoke.reorder.persisted) smoke.errors.push('拖动排序没有写入磁盘');
       }
 
+      // 设置页/均衡器不应因一次改动而整页重建（重建会打断拖动 + 闪一下）
+      smokePhase('no-flicker');
+      smoke.noFlicker = await evalJs(`(async () => {
+        const A = window.App;
+        const out = {};
+        A.setView('settings');
+        await new Promise(r => setTimeout(r, 600));
+        const root = document.getElementById('viewRoot');
+        const slider = root.querySelector('.set-sec input[type="range"]');
+        const themes = root.querySelectorAll('.theme-item');
+        if (!slider || themes.length < 2) return { skipped: true, hasSlider: !!slider, themeCount: themes.length };
+        // 记录并在测试结束后还原用户的原始外观设置
+        const origTheme = A.settings.theme;
+        const origRadius = A.settings.radius;
+        slider.dataset.probe = 'keep';
+        themes[0].dataset.probe = 'keep';
+
+        // 改一次设置（等同拖动滑块）
+        slider.value = String(Number(slider.value) + (Number(slider.step) || 1));
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise(r => setTimeout(r, 900));
+        out.survivedAfterSlider = !!root.querySelector('[data-probe="keep"]');
+
+        // 点另一个主题
+        themes[1].click();
+        await new Promise(r => setTimeout(r, 900));
+        out.survivedAfterTheme = !!root.querySelector('[data-probe="keep"]');
+        out.themeSelIndex = Array.from(root.querySelectorAll('.theme-item')).findIndex(x => x.classList.contains('sel'));
+        out.themeApplied = document.documentElement.dataset.theme;
+
+        // 均衡器预设：应就地推动 10 个滑块，不重建页面
+        const savedBands = (A.settings.eq.bands || []).slice();
+        const savedPreamp = A.settings.eq.preamp;
+        const savedPreset = A.settings.eq.preset;
+        A.setView('eq');
+        await new Promise(r => setTimeout(r, 600));
+        const eqRoot = document.getElementById('viewRoot');
+        const band0 = eqRoot.querySelector('.eq-band input.eq-slider');
+        if (band0) band0.dataset.probe = 'keep';
+        const chips = Array.from(eqRoot.querySelectorAll('.preset-list .chip'));
+        const rock = chips.find(c => c.textContent.trim() === '摇滚');
+        if (rock) {
+          rock.click();
+          await new Promise(r => setTimeout(r, 700));
+          const vals = Array.from(eqRoot.querySelectorAll('.eq-band input.eq-slider')).map(i => Number(i.value));
+          const expected = ((window.AURORA_PRESETS || {}).EQ_PRESETS || {})['摇滚'] || [];
+          out.eqBands = vals.slice(0, 5);
+          out.eqApplied = vals.length === 10 && vals.every((v, i) => Math.abs(v - expected[i]) < 0.001);
+          out.eqProbeSurvived = !!eqRoot.querySelector('[data-probe="keep"]');
+          out.eqChipOn = chips.some(c => c.dataset.preset === '摇滚' && c.classList.contains('on'));
+        }
+        A.setEq({ bands: savedBands, preamp: savedPreamp, preset: savedPreset });
+        await A.saveSettings({ theme: origTheme, radius: origRadius });
+        A.setView('settings');
+        await new Promise(r => setTimeout(r, 400));
+        out.fadeEls = document.getElementById('viewRoot').querySelectorAll('.fade-in').length;
+        out.restoredSettings = A.settings.theme === origTheme && A.settings.radius === origRadius;
+        return out;
+      })()`);
+      if (smoke.noFlicker && !smoke.noFlicker.skipped) {
+        if (!smoke.noFlicker.survivedAfterSlider) smoke.errors.push('拖动设置滑块时页面被重建（会打断拖动并闪烁）');
+        if (!smoke.noFlicker.survivedAfterTheme) smoke.errors.push('点击主题时页面被重建（会闪烁）');
+        if (smoke.noFlicker.themeSelIndex !== 1) smoke.errors.push('点击主题后高亮没有跟着移动: index=' + smoke.noFlicker.themeSelIndex);
+        if (smoke.noFlicker.eqApplied === false) smoke.errors.push('点击均衡器预设后滑块没有就位: ' + JSON.stringify(smoke.noFlicker.eqBands));
+        if (smoke.noFlicker.eqProbeSurvived === false) smoke.errors.push('点击均衡器预设时页面被重建');
+        if (smoke.noFlicker.fadeEls !== 0) smoke.errors.push('仍然存在 fade-in 元素: ' + smoke.noFlicker.fadeEls);
+      }
+
       // 实时累计听歌时长（回归测试：曾经「累计」标签在正在播放页永远显示 00:00）
       smokePhase('cumulative');
       smoke.cumulative = await evalJs(`(async () => {
@@ -1587,11 +1655,19 @@ function runSmokeTest() {
       smokePhase('eq-layout');
       smoke.eqLayout = await evalJs(`(() => new Promise(res => {
         const A = window.App;
-        A.setView('eq');
+        try { A.setView('eq'); } catch (e) { return res({ found: false, ok: false, viewError: String(e && e.message || e) }); }
         setTimeout(() => {
           const all = document.querySelectorAll('.eq-band input.eq-slider');
           const inp = all[0];
-          if (!inp) return res({ found: false, ok: false });
+          if (!inp) {
+            const vr = document.getElementById('viewRoot');
+            return res({
+              found: false, ok: false, view: A.state.view,
+              rootLen: vr ? vr.innerHTML.length : -1,
+              head: vr ? vr.innerHTML.slice(0, 160) : '',
+              errs: (window.__auroraErrors || []).slice(-3)
+            });
+          }
           const r = inp.getBoundingClientRect();
           const box = inp.closest('.slider-box');
           const br = box ? box.getBoundingClientRect() : null;
@@ -1601,7 +1677,7 @@ function runSmokeTest() {
             boxH: br ? Math.round(br.height) : 0,
             ok: all.length === 10 && r.height >= 180
           });
-        }, 700);
+        }, 1200);
       }))()`);
       if (smoke.eqLayout && !smoke.eqLayout.ok) smoke.errors.push('均衡器竖直滑块渲染异常: ' + JSON.stringify(smoke.eqLayout));
 
