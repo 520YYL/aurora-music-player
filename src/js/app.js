@@ -56,6 +56,7 @@
     buildEngine();
     applySettingsToDom();
     wireTitlebar();
+    wireSidebar();
     wirePlayerBar();
     wireSearch();
     wireShortcuts();
@@ -408,6 +409,31 @@
     $('#winMin').onclick = () => api.app.minimize();
     $('#winMax').onclick = () => api.app.maximize();
     $('#winClose').onclick = () => api.app.close();
+  }
+
+  /** 左侧导航栏 + 「添加文件夹」/「新建播放列表」按钮 */
+  function wireSidebar() {
+    $$('.nav-item[data-view]').forEach((item) => {
+      const view = item.dataset.view;
+      item.onclick = () => {
+        if (view === 'playlists') {
+          if (App.state.playlistId) App.openPlaylist(App.state.playlistId);
+          else App.setView('playlists');
+          return;
+        }
+        App.setView(view);
+      };
+    });
+    const add = $('#addFolder');
+    if (add) {
+      add.onclick = (e) => { e.stopPropagation(); App.addFolder(); };
+      add.style.cursor = 'pointer';
+    }
+    const np = $('#newPlaylist');
+    if (np) {
+      np.onclick = (e) => { e.stopPropagation(); App.createPlaylist(); };
+      np.style.cursor = 'pointer';
+    }
   }
 
   function wireSearch() {

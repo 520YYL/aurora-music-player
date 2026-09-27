@@ -1397,6 +1397,42 @@ function runSmokeTest() {
         return out;
       })()`);
 
+      // 侧栏导航与按钮接线（回归测试：早期版本这里忘了绑定点击事件）
+      smokePhase('sidebar');
+      smoke.sidebar = await evalJs(`(async () => {
+        const A = window.App;
+        const out = { nav: [], errors: [] };
+        const items = Array.from(document.querySelectorAll('.nav-item[data-view]'));
+        out.navItemCount = items.length;
+        for (const el of items) {
+          const want = el.dataset.view;
+          try {
+            el.click();
+            await new Promise(r => setTimeout(r, 130));
+            const root = document.getElementById('viewRoot');
+            const viewOk = want === 'playlists' ? (A.state.view === 'playlists' || A.state.view === 'playlist') : A.state.view === want;
+            out.nav.push({ view: want, ok: viewOk && !!root && root.children.length > 0, actual: A.state.view, nodes: root ? root.children.length : -1 });
+          } catch (e) { out.nav.push({ view: want, ok: false, err: String((e && e.message) || e) }); }
+        }
+        A.setView('library');
+        const origAdd = A.addFolder, origPl = A.createPlaylist;
+        let addCalled = false, plCalled = false;
+        A.addFolder = () => { addCalled = true; };
+        A.createPlaylist = () => { plCalled = true; };
+        const addBtn = document.getElementById('addFolder');
+        const plBtn = document.getElementById('newPlaylist');
+        if (addBtn) addBtn.click(); else out.errors.push('缺少 #addFolder');
+        if (plBtn) plBtn.click(); else out.errors.push('缺少 #newPlaylist');
+        A.addFolder = origAdd; A.createPlaylist = origPl;
+        out.addFolderWired = addCalled;
+        out.newPlaylistWired = plCalled;
+        out.failed = out.nav.filter(n => !n.ok).map(n => n.view);
+        return out;
+      })()`);
+      if (smoke.sidebar && smoke.sidebar.failed && smoke.sidebar.failed.length) smoke.errors.push('侧栏导航点击无效: ' + smoke.sidebar.failed.join(', '));
+      if (smoke.sidebar && !smoke.sidebar.addFolderWired) smoke.errors.push('添加文件夹按钮未接线');
+      if (smoke.sidebar && !smoke.sidebar.newPlaylistWired) smoke.errors.push('新建播放列表按钮未接线');
+
       // 统计写入检查
       smokePhase('stats');
       await sleep(1500);
