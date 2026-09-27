@@ -1,7 +1,7 @@
 {
   "name": "aurora-player",
   "version": "1.0.0",
-  "description": "极光音乐 Aurora Music - 本地音乐播放器：多主题、桌面歌词、听歌时长统计、均衡器、音效插件",
+  "description": "极光音乐 Aurora Music - 本地音乐播放器：多主题、歌词、听歌时长统计、均衡器、音效插件",
   "main": "electron/main.js",
   "author": "Aurora Music",
   "license": "MIT",

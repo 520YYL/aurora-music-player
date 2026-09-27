@@ -212,7 +212,7 @@
     }
   }
 
-  /** 渲染歌词到容器（主窗口 / 桌面歌词 / 迷你播放器共用） */
+  /** 渲染歌词到容器（正在播放页 / 迷你播放器共用） */
   function renderTo(container, ctrl, opts = {}) {
     const { activeClass = 'active', pastClass = 'past', showTr = true, karaoke = true } = opts;
     container.innerHTML = '';

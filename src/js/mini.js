@@ -79,7 +79,6 @@
   $('#next').onclick = () => api.player.command('next');
   $('#prev').onclick = () => api.player.command('prev');
   $('#mode').onclick = () => api.player.command('repeat');
-  $('#dl').onclick = () => api.player.command('toggleDesktopLyrics');
   $('#main').onclick = () => api.app.focusMain();
   $('#expand').onclick = () => api.app.focusMain();
   $('#close').onclick = () => api.mini.toggle(false);

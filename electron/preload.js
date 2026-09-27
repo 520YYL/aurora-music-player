@@ -52,7 +52,6 @@ contextBridge.exposeInMainWorld('aurora', {
   },
   player: {
     command: (action) => invoke('player:command', action),
-    syncLyrics: (payload) => invoke('lyricsWin:sync', payload),
     syncMini: (payload) => invoke('mini:sync', payload)
   },
   settings: {
@@ -80,15 +79,8 @@ contextBridge.exposeInMainWorld('aurora', {
     import: (id) => invoke('lyrics:import', id),
     saveFor: (name, base64) => invoke('lyrics:saveFor', name, base64),
     list: () => invoke('lyrics:list'),
-    toggleDesktop: (force) => invoke('lyricsWin:toggle', force),
-    update: (patch) => invoke('lyricsWin:update', patch),
-    setClickThrough: (on) => invoke('lyricsWin:setClickThrough', on),
-    lock: (on) => invoke('lyricsWin:lock', on),
-    setAlwaysOnTop: (on) => invoke('lyricsWin:setAlwaysOnTop', on),
-    resetPos: () => invoke('lyricsWin:resetPos'),
-    sync: (payload) => invoke('lyricsWin:sync', payload),
-    requestSync: () => invoke('overlay:requestSync'),
-    getBounds: () => invoke('lyricsWin:getBounds')
+    // 浮层窗口已移除，此通道仅用于迷你播放器开窗后主动索要一次同步
+    requestSync: () => invoke('overlay:requestSync')
   },
   mini: {
     toggle: (force) => invoke('mini:toggle', force),

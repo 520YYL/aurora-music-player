@@ -409,7 +409,7 @@
   /* ================================================================== */
   const SC_LABELS = {
     playPause: '播放 / 暂停', next: '下一首', prev: '上一首', volumeUp: '音量 +', volumeDown: '音量 −',
-    mute: '静音切换', seekForward: '快进 5 秒', seekBackward: '后退 5 秒', toggleDesktopLyrics: '开关桌面歌词',
+    mute: '静音切换', seekForward: '快进 5 秒', seekBackward: '后退 5 秒',
     toggleMini: '开关迷你播放器', toggleMain: '显示 / 隐藏主窗口', shuffle: '随机播放', repeat: '循环模式',
     favorite: '收藏当前歌曲', search: '聚焦搜索框', theme: '切换主题', eq: '打开均衡器', stats: '打开听歌统计', stop: '停止播放'
   };
@@ -426,7 +426,7 @@
     const sections = ce('div', {});
 
     const ids = [
-      ['appearance', '🎨 外观与背景'], ['lyrics', '🎤 桌面歌词'], ['playback', '▶ 播放与过渡'],
+      ['appearance', '🎨 外观与背景'], ['playback', '▶ 播放与过渡'],
       ['shortcuts', '⌨️ 快捷键'], ['library', '📁 曲库'], ['stats', '📊 统计'], ['data', '💾 数据与关于']
     ];
     for (const [id, label] of ids) {
@@ -484,46 +484,6 @@
     secA.appendChild(setRow('背景变暗', null, [slider(0, 0.9, 0.05, s.background.dim, (v) => app.saveSettings({ background: { ...s.background, dim: v } }), (v) => `${Math.round(v * 100)}%`)]));
     secA.appendChild(setRow('背景饱和', null, [slider(0.4, 2, 0.05, s.background.saturate, (v) => app.saveSettings({ background: { ...s.background, saturate: v } }), (v) => `${v}×`)]));
     sections.appendChild(secA);
-
-    /* ---------- 桌面歌词 ---------- */
-    const L = s.lyrics;
-    const secL = section('桌面歌词', '独立浮层窗口，可调颜色、字体、阴影、描边与位置；支持中英文分别设置字体');
-    secL.dataset.sec = 'lyrics';
-    secL.appendChild(setRow('开启桌面歌词', 'Ctrl+L 快速开关', [sw(L.desktopEnabled, (v) => app.setDesktopLyrics(v))]));
-    secL.appendChild(setRow('锁定位置', '锁定后鼠标穿透，不影响操作其他窗口', [sw(L.locked, (v) => app.lockLyrics(v))]));
-    secL.appendChild(setRow('始终置顶', null, [sw(L.alwaysOnTop, (v) => app.saveSettings({ lyrics: { ...L, alwaysOnTop: v } }))]));
-    secL.appendChild(setRow('字号', null, [slider(14, 90, 1, L.fontSize, (v) => app.saveSettings({ lyrics: { ...L, fontSize: v } }), (v) => `${v}px`)]));
-    secL.appendChild(setRow('行间距', null, [slider(0, 60, 1, L.lineGap, (v) => app.saveSettings({ lyrics: { ...L, lineGap: v } }), (v) => `${v}px`)]));
-    secL.appendChild(setRow('不透明度', null, [slider(0.15, 1, 0.01, L.opacity, (v) => app.saveSettings({ lyrics: { ...L, opacity: v } }), (v) => `${Math.round(v * 100)}%`)]));
-    secL.appendChild(setRow('对齐方式', null, [select([{ value: 'left', label: '左对齐' }, { value: 'center', label: '居中' }, { value: 'right', label: '右对齐' }], L.align, (v) => app.saveSettings({ lyrics: { ...L, align: v } }))]));
-    secL.appendChild(setRow('常规颜色', null, [colorInput(L.color, (v) => app.saveSettings({ lyrics: { ...L, color: v } })), ce('span', { class: 'muted', style: { fontSize: '12px' }, text: '当前行' }), colorInput(L.activeColor, (v) => app.saveSettings({ lyrics: { ...L, activeColor: v } })), ce('span', { class: 'muted', style: { fontSize: '12px' }, text: '已播过' }), colorInput(L.playedColor, (v) => app.saveSettings({ lyrics: { ...L, playedColor: v } }))]));
-    secL.appendChild(setRow('中文字体', '中文行使用', [select(fontOptions(), L.cnFont, (v) => app.saveSettings({ lyrics: { ...L, cnFont: v } }))]));
-    secL.appendChild(setRow('英文字体', '英文行使用', [select(fontOptions(), L.enFont, (v) => app.saveSettings({ lyrics: { ...L, enFont: v } }))]));
-    secL.appendChild(setRow('字重', null, [slider(300, 900, 100, L.weight, (v) => app.saveSettings({ lyrics: { ...L, weight: Number(v) } }), (v) => String(v))]));
-    secL.appendChild(setRow('阴影', '颜色 / 模糊 / 偏移', [
-      sw(L.shadow.enabled, (v) => app.saveSettings({ lyrics: { ...L, shadow: { ...L.shadow, enabled: v } } })),
-      colorInput(L.shadow.color, (v) => app.saveSettings({ lyrics: { ...L, shadow: { ...L.shadow, color: v } } })),
-      slider(0, 40, 1, L.shadow.blur, (v) => app.saveSettings({ lyrics: { ...L, shadow: { ...L.shadow, blur: v } } }), (v) => `模糊 ${v}`),
-      slider(-20, 20, 1, L.shadow.x, (v) => app.saveSettings({ lyrics: { ...L, shadow: { ...L.shadow, x: v } } }), (v) => `X ${v}`),
-      slider(-20, 20, 1, L.shadow.y, (v) => app.saveSettings({ lyrics: { ...L, shadow: { ...L.shadow, y: v } } }), (v) => `Y ${v}`)
-    ]));
-    secL.appendChild(setRow('描边', '让歌词在任何背景上都清晰', [
-      sw(L.stroke.enabled, (v) => app.saveSettings({ lyrics: { ...L, stroke: { ...L.stroke, enabled: v } } })),
-      colorInput(L.stroke.color, (v) => app.saveSettings({ lyrics: { ...L, stroke: { ...L.stroke, color: v } } })),
-      slider(0, 6, 0.1, L.stroke.width, (v) => app.saveSettings({ lyrics: { ...L, stroke: { ...L.stroke, width: v } } }), (v) => `${v}px`)
-    ]));
-    secL.appendChild(setRow('显示翻译', '双语歌词的第二行', [sw(L.showTranslation, (v) => app.saveSettings({ lyrics: { ...L, showTranslation: v } }))]));
-    secL.appendChild(setRow('显示下一句', null, [sw(L.showNextLine, (v) => app.saveSettings({ lyrics: { ...L, showNextLine: v } }))]));
-    secL.appendChild(setRow('卡拉OK 染色', '按进度给当前行上色', [sw(L.karaoke, (v) => app.saveSettings({ lyrics: { ...L, karaoke: v } }))]));
-    secL.appendChild(setRow('窗口尺寸 / 位置', null, [
-      ce('button', { class: 'btn sm', text: '↺ 重置位置', onclick: () => window.aurora.lyrics.resetPos() }),
-      ce('button', { class: 'btn sm', text: '🖥 目标显示器', onclick: () => app.pickLyricsMonitor() })
-    ]));
-    secL.appendChild(setRow('显示内容预览', '立即打开桌面歌词查看效果', [
-      ce('button', { class: 'btn sm primary', text: '👁 显示桌面歌词', onclick: () => app.setDesktopLyrics(true) }),
-      ce('button', { class: 'btn sm', text: '隐藏', onclick: () => app.setDesktopLyrics(false) })
-    ]));
-    sections.appendChild(secL);
 
     /* ---------- 播放与过渡 ---------- */
     const P = s.playback;

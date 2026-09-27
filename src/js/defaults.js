@@ -55,32 +55,6 @@
       preset: '默认'
     },
 
-    // 桌面歌词
-    lyrics: {
-      desktopEnabled: false,
-      locked: false,
-      alwaysOnTop: true,
-      clickThrough: false,
-      fontSize: 34,
-      lineGap: 14,
-      opacity: 0.96,
-      align: 'center',           // left | center | right
-      color: '#ffffff',
-      activeColor: '#7c5cff',
-      playedColor: '#22d3ee',
-      cnFont: '"Microsoft YaHei UI", "PingFang SC", sans-serif',
-      enFont: '"Segoe UI", "Arial", sans-serif',
-      weight: 700,
-      shadow: { enabled: true, color: '#000000', blur: 12, x: 0, y: 2, opacity: 0.85 },
-      stroke: { enabled: true, width: 1.4, color: '#000000' },
-      showTranslation: true,
-      showNextLine: true,
-      showProgressBar: false,
-      karaoke: true,
-      pos: { x: null, y: null, w: 1100, h: 220 },
-      monitor: 'primary'
-    },
-
     mini: {
       visible: false,
       pos: { x: null, y: null },
@@ -107,7 +81,6 @@
         mute: 'Ctrl+M',
         seekForward: 'ArrowRight',
         seekBackward: 'ArrowLeft',
-        toggleDesktopLyrics: 'Ctrl+L',
         toggleMini: 'Ctrl+P',
         toggleMain: 'Ctrl+Alt+A',
         shuffle: 'Ctrl+S',
@@ -123,8 +96,7 @@
         next: 'MediaNextTrack',
         prev: 'MediaPreviousTrack',
         stop: 'MediaStop',
-        toggleMain: 'Ctrl+Alt+A',
-        toggleDesktopLyrics: 'Ctrl+Alt+L'
+        toggleMain: 'Ctrl+Alt+A'
       },
       globalEnabled: true
     },

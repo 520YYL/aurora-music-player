@@ -49,7 +49,6 @@ if (SMOKE) { try { fs.writeFileSync(TRACE_FILE, ''); } catch { /* ignore */ } }
 trace('module-loaded argv=' + process.argv.slice(1).join(' '));
 
 /** @type {BrowserWindow|null} */ let mainWindow = null;
-/** @type {BrowserWindow|null} */ let lyricsWindow = null;
 /** @type {BrowserWindow|null} */ let miniWindow = null;
 /** @type {Tray|null} */ let tray = null;
 
@@ -245,6 +244,18 @@ function initStores() {
     }
     if (guess.length) settingsStore.set('library.roots', guess);
   }
+  // 设置迁移：桌面歌词浮层功能已整体移除（用户要求），清掉遗留配置项
+  if (settingsStore.data && settingsStore.data.lyrics) {
+    delete settingsStore.data.lyrics;
+    const inApp = settingsStore.get('shortcuts.inApp') || {};
+    const glob = settingsStore.get('shortcuts.global') || {};
+    delete inApp.toggleDesktopLyrics;
+    delete glob.toggleDesktopLyrics;
+    settingsStore.set('shortcuts.inApp', inApp);
+    settingsStore.set('shortcuts.global', glob);
+    trace('settings migration: removed legacy desktop-lyrics config');
+  }
+
   // 设置迁移：v1 的 rememberPosition 默认为 true，但该功能当时并未真正接上，
   // 现在功能生效后必须默认关闭，否则老用户更新后会突然「跳到上次听到的位置」。
   const settingsVer = settingsStore.get('version', 1);
@@ -384,55 +395,6 @@ function createMainWindow() {
   mainWindow.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith('aurora://')) { e.preventDefault(); if (/^https?:/i.test(url)) shell.openExternal(url); }
   });
-}
-
-function createLyricsWindow() {
-  if (lyricsWindow && !lyricsWindow.isDestroyed()) return lyricsWindow;
-  const L = settingsStore.get('lyrics', DEFAULTS.DEFAULT_SETTINGS.lyrics);
-  const pos = L.pos || {};
-  const w = pos.w || 1100;
-  const h = pos.h || 220;
-  const x = Number.isFinite(pos.x) ? pos.x : Math.round((screen.getPrimaryDisplay().workAreaSize.width - w) / 2);
-  const y = Number.isFinite(pos.y) ? pos.y : Math.round(screen.getPrimaryDisplay().workAreaSize.height - h - 90);
-
-  lyricsWindow = new BrowserWindow({
-    width: w, height: h, x, y,
-    minWidth: 420, minHeight: 110,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    hasShadow: false,
-    resizable: true,
-    movable: true,
-    skipTaskbar: true,
-    focusable: true,
-    show: false,
-    fullscreenable: false,
-    alwaysOnTop: L.alwaysOnTop !== false,
-    title: 'Aurora 桌面歌词',
-    webPreferences: {
-      preload: preloadPath(),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      backgroundThrottling: false
-    }
-  });
-  lyricsWindow.setAlwaysOnTop(L.alwaysOnTop !== false, 'screen-saver');
-  lyricsWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  lyricsWindow.loadURL(appUrl('lyrics.html'));
-  lyricsWindow.once('ready-to-show', () => { if (L.desktopEnabled) lyricsWindow.showInactive(); });
-  lyricsWindow.on('closed', () => { lyricsWindow = null; });
-
-  const persistPos = () => {
-    if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
-    const b = lyricsWindow.getBounds();
-    settingsStore.set('lyrics.pos', b);
-  };
-  lyricsWindow.on('move', persistPos);
-  lyricsWindow.on('resize', persistPos);
-  if (L.clickThrough) lyricsWindow.setIgnoreMouseEvents(true, { forward: true });
-  return lyricsWindow;
 }
 
 function createMiniWindow() {
@@ -682,7 +644,7 @@ function computeStatsSummary() {
 /* ------------------------------------------------------------------ */
 const GLOBAL_ACTIONS = {
   playPause: 'playPause', next: 'next', prev: 'prev', stop: 'stop',
-  toggleMain: 'toggleMain', toggleDesktopLyrics: 'toggleDesktopLyrics', toggleMini: 'toggleMini'
+  toggleMain: 'toggleMain', toggleMini: 'toggleMini'
 };
 
 function toElectronAccel(accel) {
@@ -717,7 +679,6 @@ function registerGlobalShortcuts() {
 
 function handleGlobalAction(action) {
   if (action === 'toggleMain') { toggleMainWindow(); return; }
-  if (action === 'toggleDesktopLyrics') { toggleDesktopLyrics(); return; }
   if (action === 'toggleMini') { toggleMini(); return; }
   broadcast('shortcut:action', { action });
 }
@@ -725,21 +686,6 @@ function handleGlobalAction(action) {
 function toggleMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()) mainWindow.hide();
   else showMain();
-}
-
-function toggleDesktopLyrics(force) {
-  const cur = settingsStore.get('lyrics.desktopEnabled', false);
-  const next = typeof force === 'boolean' ? force : !cur;
-  settingsStore.set('lyrics.desktopEnabled', next);
-  settingsStore.save();
-  if (next) {
-    const w = createLyricsWindow();
-    w.showInactive();
-  } else if (lyricsWindow && !lyricsWindow.isDestroyed()) {
-    lyricsWindow.hide();
-  }
-  broadcast('settings:changed', { lyrics: settingsStore.get('lyrics') });
-  return next;
 }
 
 function toggleMini(force) {
@@ -824,7 +770,6 @@ function setupIpc() {
     settingsStore.save();
     broadcast('settings:changed', patch, e.sender.id);
     if (patch && patch.shortcuts) registerGlobalShortcuts();
-    if (patch && patch.lyrics) applyLyricsSettings(patch.lyrics);
     if (patch && patch.mini) applyMiniSettings(patch.mini);
     return settingsStore.get();
   });
@@ -941,55 +886,8 @@ function setupIpc() {
     } catch { return []; }
   });
 
-  // 桌面歌词窗口
-  handle('lyricsWin:toggle', (e, force) => ({ enabled: toggleDesktopLyrics(force) }));
-  handle('lyricsWin:show', () => { toggleDesktopLyrics(true); return { ok: true }; });
-  handle('lyricsWin:hide', () => { toggleDesktopLyrics(false); return { ok: true }; });
-  handle('lyricsWin:update', (e, patch) => {
-    if (patch && typeof patch === 'object') {
-      settingsStore.merge({ lyrics: patch });
-      settingsStore.save();
-      const L = settingsStore.get('lyrics');
-      applyLyricsSettings(L);
-      broadcast('lyrics:settings', L);
-      broadcast('settings:changed', { lyrics: L }, e.sender.id);
-    }
-    return { ok: true };
-  });
-  handle('lyricsWin:setClickThrough', (e, on) => {
-    settingsStore.set('lyrics.clickThrough', !!on); settingsStore.save();
-    if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.setIgnoreMouseEvents(!!on, { forward: true });
-    broadcast('settings:changed', { lyrics: settingsStore.get('lyrics') });
-    return { ok: true };
-  });
-  handle('lyricsWin:lock', (e, on) => {
-    settingsStore.set('lyrics.locked', !!on);
-    if (lyricsWindow && !lyricsWindow.isDestroyed()) {
-      lyricsWindow.setIgnoreMouseEvents(!!on, { forward: true });
-      lyricsWindow.setResizable(!on);
-    }
-    settingsStore.save();
-    broadcast('settings:changed', { lyrics: settingsStore.get('lyrics') });
-    return { ok: true };
-  });
-  handle('lyricsWin:setAlwaysOnTop', (e, on) => {
-    settingsStore.set('lyrics.alwaysOnTop', !!on); settingsStore.save();
-    if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.setAlwaysOnTop(!!on, 'screen-saver');
-    return { ok: true };
-  });
-  handle('lyricsWin:resetPos', () => {
-    if (lyricsWindow && !lyricsWindow.isDestroyed()) {
-      const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-      lyricsWindow.setBounds({ x: Math.round((width - 1100) / 2), y: height - 310, width: 1100, height: 220 });
-    }
-    return { ok: true };
-  });
-  handle('lyricsWin:sync', (e, payload) => { broadcast('lyrics:sync', payload); return { ok: true }; });
-  // 浮层/迷你窗口加载完成后主动索要一次同步（解决开窗时丢掉首条消息的问题）
-  handle('overlay:requestSync', () => { broadcast('overlay:request-sync', {}); return { ok: true }; });
-  handle('lyricsWin:getBounds', () => (lyricsWindow && !lyricsWindow.isDestroyed() ? lyricsWindow.getBounds() : null));
-
   // 迷你播放器
+  handle('overlay:requestSync', () => { broadcast('overlay:request-sync', {}); return { ok: true }; });
   handle('mini:toggle', (e, force) => ({ visible: toggleMini(force) }));
   handle('mini:update', (e, patch) => {
     if (patch && typeof patch === 'object') {
@@ -1161,7 +1059,7 @@ function setupIpc() {
     return { ok: true, dir };
   });
 
-  // 迷你播放器 / 桌面歌词发来的播放控制命令
+  // 迷你播放器发来的播放控制命令
   handle('player:command', (e, action) => {
     broadcast('shortcut:action', { action });
     return { ok: true };
@@ -1263,27 +1161,6 @@ function setupIpc() {
   });
 }
 
-function applyLyricsSettings(patch) {
-  if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
-  const L = settingsStore.get('lyrics', DEFAULTS.DEFAULT_SETTINGS.lyrics);
-  if (patch && typeof patch.alwaysOnTop === 'boolean') lyricsWindow.setAlwaysOnTop(patch.alwaysOnTop, 'screen-saver');
-  if (patch && typeof patch.clickThrough === 'boolean') lyricsWindow.setIgnoreMouseEvents(patch.clickThrough, { forward: true });
-  if (patch && patch.pos && (Number.isFinite(patch.pos.w) || Number.isFinite(patch.pos.h))) {
-    const b = lyricsWindow.getBounds();
-    lyricsWindow.setBounds({ x: b.x, y: b.y, width: patch.pos.w || b.width, height: patch.pos.h || b.height });
-  }
-  if (patch && patch.monitor && patch.monitor !== 'primary') {
-    const displays = screen.getAllDisplays();
-    const idx = parseInt(String(patch.monitor).replace('display-', ''), 10);
-    const d = displays[idx];
-    if (d) {
-      const b = lyricsWindow.getBounds();
-      lyricsWindow.setBounds({ x: d.workArea.x + Math.round((d.workArea.width - b.width) / 2), y: d.workArea.y + d.workArea.height - b.height - 90, width: b.width, height: b.height });
-    }
-  }
-  broadcast('lyrics:settings', L);
-}
-
 function applyMiniSettings(patch) {
   const M = settingsStore.get('mini', DEFAULTS.DEFAULT_SETTINGS.mini);
   if (patch && typeof patch.visible === 'boolean') toggleMini(patch.visible);
@@ -1309,7 +1186,6 @@ function ensureTray() {
       { label: '上一首', click: () => broadcast('shortcut:action', { action: 'prev' }) },
       { label: '下一首', click: () => broadcast('shortcut:action', { action: 'next' }) },
       { type: 'separator' },
-      { label: '桌面歌词', type: 'checkbox', checked: settingsStore.get('lyrics.desktopEnabled', false), click: (i) => toggleDesktopLyrics(i.checked) },
       { label: '迷你播放器', type: 'checkbox', checked: settingsStore.get('mini.visible', false), click: (i) => toggleMini(i.checked) },
       { type: 'separator' },
       { label: '退出', click: () => { quitting = true; app.quit(); } }
@@ -1319,7 +1195,7 @@ function ensureTray() {
 }
 
 /* ------------------------------------------------------------------ */
-/* 截图模式： --shots  把正在播放页 / 桌面歌词 / 曲库 存成 PNG 便于检查     */
+/* 截图模式： --shots  把正在播放页 / 曲库 / 设置 / 均衡器 存成 PNG 便于检查  */
 /* ------------------------------------------------------------------ */
 async function captureShots() {
   const dir = path.join(APP_ROOT, 'shots');
@@ -1398,34 +1274,6 @@ async function captureShots() {
   await wc.executeJavaScript(`window.App.setView('eq')`, true);
   await sleep(1000);
   await shot(wc, '04-eq.png');
-
-  // 桌面歌词浮层：分别放在深色与浅色背景上截图，便于判断可读性
-  toggleDesktopLyrics(true);
-  await sleep(4000);
-  if (lyricsWindow && !lyricsWindow.isDestroyed()) {
-    try { lyricsWindow.setBounds({ x: 40, y: 60, width: 1080, height: 240 }); } catch { /* ignore */ }
-    const lw = lyricsWindow.webContents;
-    await sleep(1200);
-    try {
-      await lw.executeJavaScript(`document.documentElement.style.background='linear-gradient(135deg,#12203a,#3a1d4d 60%,#0d1117)'; document.body.style.background='transparent'; true`, true);
-    } catch { /* ignore */ }
-    await sleep(600);
-    await shot(lw, '05-desktop-lyrics-dark.png');
-    try {
-      report.overlayLyric = await lw.executeJavaScript(`(() => {
-        const cur = document.getElementById('cur');
-        return { text: cur ? cur.textContent : null, background: cur ? getComputedStyle(cur).backgroundImage : null, fill: cur ? cur.style.background : null };
-      })()`, true);
-    } catch { /* ignore */ }
-    try {
-      await lw.executeJavaScript(`document.documentElement.style.background='linear-gradient(135deg,#fdfdfd,#e8ecf4)'; true`, true);
-    } catch { /* ignore */ }
-    await sleep(600);
-    await shot(lw, '06-desktop-lyrics-light.png');
-    try { await lw.executeJavaScript(`document.documentElement.style.background='transparent'; true`, true); } catch { /* ignore */ }
-  }
-  toggleDesktopLyrics(false);
-  await sleep(400);
 
   report.finishedAt = new Date().toISOString();
   try { fs.writeFileSync(path.join(dir, 'shots.json'), JSON.stringify(report, null, 2)); } catch { /* ignore */ }
@@ -1913,72 +1761,10 @@ function runSmokeTest() {
         trackEntries: Object.keys(stats.tracks || {}).length,
         sample: Object.entries(stats.tracks || {}).slice(0, 3).map(([k, v]) => ({ id: k, ms: v.ms, count: v.count }))
       };
-      // 桌面歌词窗口
-      // 关键：必须先彻底关闭已有窗口，用「全新创建的窗口」来测。
-      // 复用旧窗口时它早就收到过歌词了，会掩盖「开窗瞬间丢掉同步消息」的 bug。
-      smokePhase('lyrics-window');
+      // 迷你播放器窗口：必须用「全新创建的窗口」来测（复用旧窗口会掩盖开窗丢消息的问题）
+      smokePhase('mini-window');
       try {
-        // 先让一首有歌词的歌在播放
-        smoke.lyricsWindowTrack = await evalJs(`(async () => {
-          const A = window.App;
-          const t = A.state.tracks.find(x => /琴师/.test(x.title || '') || /琴师/.test(x.name || ''));
-          if (!t) return null;
-          const idx = A.state.tracks.findIndex(x => x.id === t.id);
-          A.player.setQueue(A.state.tracks, idx);
-          await new Promise(r => setTimeout(r, 2600));
-          // 再跳到「歌词中段」：这样浮层必定处于「有当前句」的状态，
-          // 而不是前奏期（前奏期只会显示即将开始的那句，测不出主路径）
-          const lines = A.lyrics.lines;
-          if (lines.length > 2) A.player.seek(lines[1].t + 1);
-          await new Promise(r => setTimeout(r, 1400));
-          return { title: t.title, lyricLines: A.lyrics.lines.length, index: A.lyrics.current, position: Number(A.engine.position().toFixed(1)) };
-        })()`);
-
-        if (lyricsWindow && !lyricsWindow.isDestroyed()) { lyricsWindow.close(); await sleep(1000); }
-        if (miniWindow && !miniWindow.isDestroyed()) { miniWindow.close(); await sleep(600); }
-
-        toggleDesktopLyrics(true);
-        await sleep(3500);
-        smoke.lyricsWindow = {
-          created: !!(lyricsWindow && !lyricsWindow.isDestroyed()),
-          visible: !!(lyricsWindow && lyricsWindow.isVisible()),
-          url: lyricsWindow ? lyricsWindow.webContents.getURL() : null
-        };
-        const lw = lyricsWindow;
-        if (lw) {
-          smoke.lyricsWindow.render = await lw.webContents.executeJavaScript(`(() => {
-            const cur = document.getElementById('cur');
-            const empty = document.getElementById('empty');
-            const nxt = document.getElementById('nxt');
-            return {
-              hasApi: !!window.aurora,
-              cur: cur ? cur.textContent : null,
-              curVisible: cur ? !cur.classList.contains('hidden') : null,
-              next: nxt ? nxt.textContent : null,
-              emptyShown: empty ? !empty.classList.contains('hidden') : null,
-              emptyText: empty ? empty.textContent : null,
-              errs: window.__auroraErrors || []
-            };
-          })()`).catch((e) => 'eval-fail: ' + e.message);
-        }
-        // 卡顿回归测试：播放中浮层不应反复重建 DOM、也不应反复改窗口大小
-        if (lw && !lw.isDestroyed()) {
-          try {
-            const perfA = await lw.webContents.executeJavaScript('window.__perf', true);
-            await sleep(3200);
-            const perfB = await lw.webContents.executeJavaScript('window.__perf', true);
-            smoke.overlayPerf = {
-              a: perfA, b: perfB,
-              syncDelta: perfB.sync - perfA.sync,
-              renderDelta: perfB.rendered - perfA.rendered,
-              linesDelta: perfB.linesApplied - perfA.linesApplied,
-              resizeDelta: perfB.resizes - perfA.resizes
-            };
-            if (smoke.overlayPerf.linesDelta > 0) smoke.errors.push('桌面歌词播放中反复重建歌词 DOM（会卡顿）: ' + smoke.overlayPerf.linesDelta);
-            if (smoke.overlayPerf.resizeDelta > 1) smoke.errors.push('桌面歌词播放中反复改变窗口大小（会卡顿）: ' + smoke.overlayPerf.resizeDelta);
-          } catch (e) { smoke.errors.push('overlayPerf: ' + e.message); }
-        }
-        // 迷你播放器也用全新窗口验证（它同样依赖这条同步消息）
+        if (miniWindow && !miniWindow.isDestroyed()) { miniWindow.close(); await sleep(800); }
         toggleMini(true);
         await sleep(2500);
         smoke.miniWindow = { created: !!(miniWindow && !miniWindow.isDestroyed()), visible: !!(miniWindow && miniWindow.isVisible()) };
@@ -1992,23 +1778,12 @@ function runSmokeTest() {
           }))()`).catch((e) => 'eval-fail: ' + e.message);
         }
         toggleMini(false);
-        toggleDesktopLyrics(false);
 
-        // 断言：全新的桌面歌词窗口必须显示当前歌词，绝不能是「暂无歌词」
-        const r = smoke.lyricsWindow.render;
-        if (typeof r === 'string') smoke.errors.push('桌面歌词窗口无法读取: ' + r);
-        else if (r) {
-          if (r.emptyShown) smoke.errors.push('桌面歌词新建窗口后显示空白提示而不是歌词: ' + JSON.stringify(r.emptyText));
-          if (String(r.cur || '').includes('暂无歌词')) smoke.errors.push('桌面歌词误报「暂无歌词」（开窗时丢了同步消息）');
-          const hasLine = r.curVisible && String(r.cur || '').trim().length > 0;
-          const prelude = !r.curVisible && String(r.next || '').trim().length > 0;   // 前奏期显示第一句
-          if (!hasLine && !prelude) smoke.errors.push('桌面歌词新建窗口后没有显示任何歌词: ' + JSON.stringify(r));
-        }
         const mr = smoke.miniWindow.render;
         if (mr && typeof mr !== 'string') {
           if (!mr.title || mr.title === '未播放') smoke.errors.push('迷你播放器新建窗口后没有显示曲目信息: ' + JSON.stringify(mr));
         }
-      } catch (e) { smoke.errors.push('lyricsWindow: ' + e.message); }
+      } catch (e) { smoke.errors.push('miniWindow: ' + e.message); }
     } catch (err) {
       smoke.errors.push('smoke-fatal: ' + String(err && err.stack ? err.stack : err));
     }
@@ -2052,7 +1827,6 @@ app.whenReady().then(async () => {
   ensureTray();
   registerGlobalShortcuts();
 
-  if (settingsStore.get('lyrics.desktopEnabled', false)) { createLyricsWindow(); }
   if (settingsStore.get('mini.visible', false)) { createMiniWindow(); }
 
   // 首次运行时在桌面创建快捷方式（方便直接使用）

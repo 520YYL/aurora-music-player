@@ -89,7 +89,7 @@
     App.player = new window.Player(new window.AudioEngine({}));
     App.engine = App.player.engine;
     App.lyrics = new window.Lyrics.LyricsController({
-      onChange: () => { if (App.state.view === 'now') renderLyricsBox(); syncOverlays(true); }
+      onChange: () => { if (App.state.view === 'now') renderLyricsBox(); syncOverlays(); }
     });
     App.player.applySettings(App.settings);
 
@@ -99,11 +99,11 @@
       if (App.state.view === 'library') markPlayingRow();
       // 正在播放页是整页快照：切歌时必须重绘，否则封面/标题/累计会一直停在上一首
       if (App.state.view === 'now') App.render();
-      syncOverlays(true);
+      syncOverlays();
     });
-    App.player.on('state', () => { updatePlayButton(); syncOverlays(false); });
+    App.player.on('state', () => { updatePlayButton(); syncOverlays(); });
     App.player.on('time', () => { updateProgress(); });
-    App.player.on('mode', () => { updateModeButton(); syncOverlays(false); });
+    App.player.on('mode', () => { updateModeButton(); syncOverlays(); });
     App.player.on('deck', (e) => {
       if (e.type !== 'error' || !e.deck) return;
       const t = e.deck.track;
@@ -188,7 +188,7 @@
     applySettingsToDom();
     App.player.applySettings(App.settings);
     if (opts.rerender === true && ['settings', 'eq', 'plugins'].includes(App.state.view)) App.render();
-    syncOverlays(true);
+    syncOverlays();
     return App.settings;
   }
   App.saveSettings = saveSettings;
@@ -370,7 +370,7 @@
   async function loadLyricsFor(track) {
     await App.lyrics.loadFor(track);
     if (App.state.view === 'now') renderLyricsBox();
-    syncOverlays(true);
+    syncOverlays();
   }
 
   App.reloadLyrics = async function () {
@@ -420,7 +420,7 @@
     const m = U.modal('编辑歌词', track ? `${track.title || track.name}` : '', box, [apply, save]);
   };
 
-  function syncOverlays(full) {
+  function syncOverlays() {
     const st = App.player.state();
     const t = st.current;
     // 歌词正文每次都带上：浮层/迷你窗口可能是在歌词载入「之后」才被创建的，
@@ -442,10 +442,9 @@
       lyricIndex: App.lyrics.current,
       lyricProgress: App.lyrics.progress(st.position),
       lines,
-      settings: { lyrics: App.settings.lyrics, mini: App.settings.mini },
+      settings: { mini: App.settings.mini },
       degraded: st.degraded
     };
-    api.player.syncLyrics(payload).catch(() => {});
     api.player.syncMini(payload).catch(() => {});
   }
 
@@ -508,7 +507,6 @@
     $('#btnMute').onclick = () => setMuted(!App.engine.muted);
     $('#btnEqQuick').onclick = () => App.setView('eq');
     $('#btnPluginQuick').onclick = () => App.setView('plugins');
-    $('#btnDesktopLyrics').onclick = () => App.setDesktopLyrics(!App.settings.lyrics.desktopEnabled);
     $('#btnMini').onclick = () => api.mini.toggle();
     $('#btnVisualizer').onclick = () => toggleFloatPanel();
     $('#btnRate').onclick = (e) => openRatePopover(e.currentTarget);
@@ -605,7 +603,6 @@
   }
   function updateQuickButtons() {
     $('#btnMute').textContent = App.engine.muted || App.engine.volume === 0 ? '🔇' : (App.engine.volume < 0.45 ? '🔉' : '🔊');
-    $('#btnDesktopLyrics').classList.toggle('fav-on', !!App.settings.lyrics.desktopEnabled);
     $('#btnMini').classList.toggle('fav-on', !!App.settings.mini.visible);
     $('#btnVisualizer').classList.toggle('fav-on', !$('#floatPanel').classList.contains('hidden'));
     $('#volume').style.setProperty('--fill', `${$('#volume').value}%`);
@@ -676,7 +673,7 @@
             $$('.ly-line', box).forEach((el, i) => {
               el.classList.toggle('active', i === App.lyrics.current);
               el.classList.toggle('past', i < App.lyrics.current);
-              el.classList.toggle('karaoke', i === App.lyrics.current && App.settings.lyrics.karaoke);
+              el.classList.toggle('karaoke', i === App.lyrics.current);
             });
             window.Lyrics.scrollToActive(box, true);
           }
@@ -687,7 +684,7 @@
     }
     if (Date.now() - (App._lastOverlay || 0) > 240) {
       App._lastOverlay = Date.now();
-      syncOverlays(false);
+      syncOverlays();
     }
   }
 
@@ -1024,7 +1021,7 @@
     App.engine.setPreamp(next.preamp || 0);
     App.engine.setEqEnabled(!!next.enabled);
     // 不做整页重绘：EQ 拖动中重建 DOM 会直接打断拖动，并且画面会闪
-    syncOverlays(false);
+    syncOverlays();
   };
   App.setEqBand = function (i, v) {
     App.settings.eq.bands[i] = v;
@@ -1127,31 +1124,6 @@
   };
 
   /* ================================ 歌词窗口 / 迷你播放器 ================================ */
-  App.setDesktopLyrics = async function (on) {
-    const r = await api.lyrics.toggle(on);
-    App.settings.lyrics.desktopEnabled = r.enabled;
-    updateQuickButtons();
-    // 开关自身已经切换了外观，不需要整页重绘
-    syncOverlays(true);
-    U.toast(r.enabled ? '桌面歌词已开启' : '桌面歌词已关闭', 'ok', 1400);
-  };
-  App.lockLyrics = async function (on) {
-    await api.lyrics.lock(on);
-    App.settings.lyrics.locked = on;
-  };
-  App.pickLyricsMonitor = async function () {
-    const info = await api.app.info();
-    const box = ce('div', {});
-    box.appendChild(ce('div', { class: 'muted', style: { fontSize: '12.5px', marginBottom: '8px' }, text: '选择桌面歌词显示在哪块屏幕（多显示器时有效）' }));
-    for (const opt of [{ v: 'primary', t: '主显示器' }, { v: 'display-0', t: '显示器 1' }, { v: 'display-1', t: '显示器 2' }, { v: 'display-2', t: '显示器 3' }]) {
-      box.appendChild(ce('button', { class: 'btn sm', style: { margin: '4px' }, text: opt.t, onclick: async () => {
-        await saveSettings({ lyrics: { ...App.settings.lyrics, monitor: opt.v } });
-        m.close();
-      } }));
-    }
-    const m = U.modal('桌面歌词显示器', null, box, []);
-  };
-
   /* ================================ 浮动可视化面板 ================================ */
   function wireFloatPanel() {
     const panel = $('#floatPanel');
@@ -1222,7 +1194,6 @@
       case 'mute': setMuted(!App.engine.muted); break;
       case 'seekForward': App.player.seekRelative(5); break;
       case 'seekBackward': App.player.seekRelative(-5); break;
-      case 'toggleDesktopLyrics': App.setDesktopLyrics(!App.settings.lyrics.desktopEnabled); break;
       case 'toggleMini': api.mini.toggle().then((r) => { App.settings.mini.visible = r.visible; updateQuickButtons(); }); break;
       case 'toggleMain': api.app.focusMain(); break;
       case 'shuffle': App.player.setMode(App.player.mode === 'shuffle' ? 'sequential' : 'shuffle'); break;
@@ -1319,8 +1290,7 @@
     });
     api.on('shortcut:action', ({ action }) => runAction(action));
     // 浮层/迷你窗口刚加载好时主动索要一次，避免开窗瞬间的空白
-    api.on('overlay:request-sync', () => syncOverlays(true));
-    api.on('lyrics:settings', () => { /* 桌面歌词窗口自行处理 */ });
+    api.on('overlay:request-sync', () => syncOverlays());
     window.addEventListener('beforeunload', () => { App.player.flushStats({ reason: 'quit' }); });
     window.addEventListener('aurora:degraded', () => {
       U.toast('音频引擎已切换为直通模式（均衡器/插件/变调暂不可用）', 'err', 6000);
