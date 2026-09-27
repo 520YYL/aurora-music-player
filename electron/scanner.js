@@ -16,10 +16,24 @@ function trackId(filePath) {
   return crypto.createHash('sha1').update(String(filePath).toLowerCase()).digest('hex').slice(0, 16);
 }
 
+/**
+ * 元数据缓存版本。解析规则发生变化时必须 +1，否则旧缓存里的错误结果会被继续沿用。
+ * v2: 文件名回退解析由「歌手 - 歌名」改为「歌名 - 歌手」
+ */
+const META_VERSION = 2;
+
+/**
+ * 从文件名猜标题/歌手。
+ * 采用最常见的「歌名 - 歌手」顺序（例如 "Refrain - 阿南亮子.mp3" → 歌名 Refrain，歌手 阿南亮子）。
+ */
 function parseNameFromFile(file) {
   const base = path.basename(file, path.extname(file));
   const m = base.split(/\s+-\s+/);
-  if (m.length >= 2) return { artist: m[0].trim(), title: m.slice(1).join(' - ').trim() };
+  if (m.length >= 2) {
+    const title = m[0].trim();
+    const artist = m.slice(1).join(' - ').trim();
+    if (title) return { artist, title };
+  }
   return { artist: '', title: base.trim() };
 }
 
@@ -219,4 +233,4 @@ async function readMetadata(file, onCover) {
   return base;
 }
 
-module.exports = { scanFolders, readMetadata, trackId, mimeFor, AUDIO_EXTS, EXT_MIME, parseNameFromFile, getMM };
+module.exports = { scanFolders, readMetadata, trackId, mimeFor, AUDIO_EXTS, EXT_MIME, parseNameFromFile, getMM, META_VERSION };

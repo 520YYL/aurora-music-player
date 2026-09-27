@@ -55,6 +55,7 @@ trace('module-loaded argv=' + process.argv.slice(1).join(' '));
 
 let settingsStore, libraryStore, statsStore, playlistsStore;
 let metaCache = {};
+let NEEDS_LIBRARY_REBUILD = false;
 let DATA_DIR = '';
 let COVERS_DIR = '';
 let LYRICS_DIR = '';
@@ -225,6 +226,17 @@ function initStores() {
     }
     if (guess.length) settingsStore.set('library.roots', guess);
   }
+  // 元数据解析规则升级（例如修正了标题/歌手顺序）后，丢弃旧缓存并自动重建一次曲库，
+  // 否则用户会一直看到旧缓存里的错误结果。
+  const metaVer = settingsStore.get('library.metaVersion', 1);
+  if (metaVer !== scanner.META_VERSION) {
+    settingsStore.set('library.metaVersion', scanner.META_VERSION);
+    try { fs.unlinkSync(path.join(DATA_DIR, 'meta-cache.json')); } catch { /* 不存在则忽略 */ }
+    metaCache = {};
+    NEEDS_LIBRARY_REBUILD = true;
+    trace(`metaVersion ${metaVer} -> ${scanner.META_VERSION}，将重建曲库`);
+  }
+
   settingsStore.save();
   libraryStore.set('roots', settingsStore.get('library.roots', []));
   libraryStore.save();
@@ -484,7 +496,7 @@ async function doScan(rootsInput, opts = {}) {
       const id = scanner.trackId(f);
       const cached = metaCache[f];
       const prev = prevById.get(id);
-      if (cached && cached.mtime === Math.round(st.mtimeMs) && cached.size === st.size) {
+      if (cached && cached.v === scanner.META_VERSION && cached.mtime === Math.round(st.mtimeMs) && cached.size === st.size) {
         const t = { ...cached.data, id, path: f };
         // 保留用户态数据
         if (prev) { t.favorite = prev.favorite; t.rating = prev.rating; t.playCount = prev.playCount; t.lastPlayedAt = prev.lastPlayedAt; }
@@ -494,7 +506,7 @@ async function doScan(rootsInput, opts = {}) {
         const meta = await scanner.readMetadata(f, (cid, buf, fmt) => coverJob.push([cid, buf, fmt]));
         for (const [cid, buf, fmt] of coverJob) saveCover(cid, buf, fmt);
         if (meta.embeddedLyrics) { delete meta.embeddedLyrics; }
-        metaCache[f] = { mtime: Math.round(st.mtimeMs), size: st.size, data: meta };
+        metaCache[f] = { v: scanner.META_VERSION, mtime: Math.round(st.mtimeMs), size: st.size, data: meta };
         const t = { ...meta };
         if (prev) { t.favorite = prev.favorite; t.rating = prev.rating; t.playCount = prev.playCount; t.lastPlayedAt = prev.lastPlayedAt; }
         tracks.push(t);
@@ -1326,6 +1338,24 @@ function runSmokeTest() {
       };
       if (!tracks.length) smoke.errors.push('曲库扫描后仍为空');
 
+      // 标题/歌手顺序校验：对于「A - B」形式的无标签文件名，标题应等于前段 A
+      smoke.nameOrder = (() => {
+        let titleFirst = 0; let artistFirst = 0; let noDash = 0; const bad = [];
+        for (const t of tracks) {
+          const base = path.basename(t.path, path.extname(t.path));
+          const parts = base.split(/\s+-\s+/);
+          if (parts.length < 2) { noDash++; continue; }
+          const a = parts[0].trim();
+          const b = parts.slice(1).join(' - ').trim();
+          if (t.title === a) titleFirst++;
+          else if (t.title === b) { artistFirst++; bad.push(`${base} -> title="${t.title}"`); }
+        }
+        return { total: tracks.length, titleFirst, artistFirst, noDash, suspicious: bad.slice(0, 5) };
+      })();
+      if (smoke.nameOrder.artistFirst > 0) {
+        smoke.errors.push(`标题/歌手可能仍然反了：${smoke.nameOrder.artistFirst} 首（例：${smoke.nameOrder.suspicious.join(' | ')}）`);
+      }
+
       // 歌词解析
       smokePhase('lyrics');
       smoke.lyrics = await evalJs(`(async () => {
@@ -1518,7 +1548,10 @@ app.whenReady().then(async () => {
   }
 
   // 启动时自动扫描（如果配置了曲库且开启自动扫描）
-  if (settingsStore.get('library.autoScan', false)) {
+  if (NEEDS_LIBRARY_REBUILD && (settingsStore.get('library.roots', []) || []).length) {
+    smokeLog('library rebuild scheduled (meta version changed)');
+    setTimeout(() => { doScan(null).catch(() => {}); }, 1200);
+  } else if (settingsStore.get('library.autoScan', false)) {
     setTimeout(() => { doScan(null).catch(() => {}); }, 1500);
   }
 });
