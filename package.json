@@ -1,0 +1,80 @@
+{
+  "name": "aurora-player",
+  "version": "1.0.0",
+  "description": "极光音乐 Aurora Music - 本地音乐播放器：多主题、桌面歌词、听歌时长统计、均衡器、音效插件",
+  "main": "electron/main.js",
+  "author": "Aurora Music",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --win --dir",
+    "dist": "electron-builder --win",
+    "demo:tracks": "node tools/gen-demo-tracks.js"
+  },
+  "dependencies": {
+    "music-metadata": "^11.2.1"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.aurora.music",
+    "productName": "AuroraPlayer",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/music-metadata/**",
+      "node_modules/strtok3/**",
+      "node_modules/token-types/**",
+      "node_modules/file-type/**",
+      "node_modules/uint8array-extras/**",
+      "node_modules/peek-readable/**",
+      "node_modules/@tokenizer/**"
+    ],
+    "extraResources": [
+      {
+        "from": "music",
+        "to": "music"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Aurora 极光音乐",
+      "artifactName": "AuroraPlayer-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "AuroraPlayer-Portable-${version}.${ext}"
+    }
+  }
+}

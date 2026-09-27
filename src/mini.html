@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="glass">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' aurora: data: blob:; style-src 'self' aurora: 'unsafe-inline'; img-src 'self' aurora: data: blob:;" />
+  <title>迷你播放器</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; background: transparent; overflow: hidden;
+      font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; color: #eef1ff; user-select: none; -webkit-font-smoothing: antialiased; }
+    #wrap { position: absolute; inset: 0; border-radius: 18px; overflow: hidden;
+      background: linear-gradient(135deg, rgba(22,24,38,.94), rgba(38,28,64,.94));
+      border: 1px solid rgba(255,255,255,.14); box-shadow: 0 14px 40px rgba(0,0,0,.5);
+      backdrop-filter: blur(20px); display: flex; flex-direction: column; }
+    #top { display: flex; align-items: center; gap: 10px; padding: 10px 12px 4px; -webkit-app-region: drag; }
+    #cover { width: 46px; height: 46px; border-radius: 10px; object-fit: cover; background: rgba(255,255,255,.08);
+      display: flex; align-items: center; justify-content: center; font-size: 20px; flex: none; }
+    #meta { flex: 1; min-width: 0; }
+    #title { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #artist { font-size: 11px; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+    #close, #expand { -webkit-app-region: no-drag; width: 22px; height: 22px; border: none; border-radius: 6px; background: transparent;
+      color: #fff; cursor: pointer; opacity: .6; font-size: 12px; }
+    #close:hover, #expand:hover { opacity: 1; background: rgba(255,255,255,.15); }
+    #pbar { height: 4px; background: rgba(255,255,255,.13); margin: 6px 12px 0; border-radius: 3px; cursor: pointer; position: relative; }
+    #fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 3px; background: linear-gradient(90deg, #7c5cff, #22d3ee); }
+    #ctrls { display: flex; align-items: center; gap: 6px; padding: 6px 12px 10px; -webkit-app-region: no-drag; }
+    #ctrls button { border: none; background: rgba(255,255,255,.08); color: #fff; border-radius: 8px; width: 30px; height: 26px;
+      cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+    #ctrls button:hover { background: rgba(255,255,255,.2); }
+    #ctrls button.main { width: 38px; background: linear-gradient(135deg, #7c5cff, #22d3ee); }
+    #ctrls button.on { background: rgba(124,92,255,.5); }
+    #time { font-size: 10.5px; opacity: .7; font-variant-numeric: tabular-nums; margin-left: auto; }
+    #viz { height: 26px; margin: 0 12px 8px; display: flex; align-items: flex-end; gap: 2px; }
+    #viz i { flex: 1; background: linear-gradient(180deg, #22d3ee, #7c5cff); border-radius: 2px; height: 3px; transition: height .08s linear; }
+    #viz.off { display: none; }
+    #lyric { font-size: 11px; opacity: .85; padding: 0 12px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="top">
+      <div id="cover">♪</div>
+      <div id="meta"><div id="title">未播放</div><div id="artist">Aurora 极光音乐</div></div>
+      <button id="expand" title="打开主窗口">⤢</button>
+      <button id="close" title="关闭迷你播放器">✕</button>
+    </div>
+    <div id="pbar"><div id="fill"></div></div>
+    <div id="ctrls">
+      <button id="prev" title="上一首">⏮</button>
+      <button id="play" class="main" title="播放/暂停">▶</button>
+      <button id="next" title="下一首">⏭</button>
+      <button id="mode" title="播放模式">🔁</button>
+      <button id="dl" title="桌面歌词">🖥</button>
+      <button id="main" title="显示主窗口">🏠</button>
+      <span id="time">00:00 / 00:00</span>
+    </div>
+    <div id="viz"></div>
+    <div id="lyric"></div>
+  </div>
+  <script src="js/util.js"></script>
+  <script src="js/mini.js"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+install.log
+install.err.log
+*.log
+smoke-report.json
+smoke-trace.log
+smoke-console.log
+.DS_Store
+Thumbs.db
