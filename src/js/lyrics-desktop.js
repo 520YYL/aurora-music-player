@@ -17,6 +17,7 @@
   let lines = [];
   let curIdx = -1;
   let L = {};
+  let gotPayload = false;   // 是否已经收到过同步数据（没收到前不要显示「暂无歌词」）
 
   function applySettings(s) {
     if (!s) return;
@@ -73,6 +74,11 @@
     if (!active) {
       if (!lines.length) {
         el.cur.classList.add('hidden'); el.tr.classList.add('hidden'); el.nxt.classList.add('hidden');
+        if (!gotPayload) {
+          // 还没收到任何数据：先什么都不显示，避免误报「暂无歌词」
+          el.empty.classList.add('hidden');
+          return;
+        }
         el.empty.classList.remove('hidden');
         el.empty.textContent = payload && payload.title ? `♪ ${payload.title} — 暂无歌词` : '等待播放…';
         return;
@@ -81,7 +87,8 @@
       el.empty.classList.add('hidden');
       el.cur.classList.add('hidden');
       el.tr.classList.add('hidden');
-      if (payload && payload.current > 0 && payload.duration) {
+      // 注意：同步消息里的字段是 position（秒），不是 current
+      if (payload && payload.duration) {
         el.nxt.textContent = lines[0].text;
         el.nxt.style.fontFamily = lines[0].isCJK ? (L.cnFont || '') : (L.enFont || '');
         el.nxt.classList.remove('hidden');
@@ -145,10 +152,11 @@
 
   api.on('lyrics:sync', (p) => {
     if (!p) return;
+    gotPayload = true;
     payload = p;
     if (p.settings && p.settings.lyrics) applySettings(p.settings.lyrics);
     if (p.settings && p.settings.theme) document.documentElement.dataset.theme = p.settings.theme;
-    if (p.full && p.lines) setLines(p.lines);
+    if (p.lines) setLines(p.lines);
     renderLine(false);
     el.btnPlay.textContent = p.playing ? '⏸' : '▶';
     if (L.showProgressBar && p.duration) el.bar.style.width = `${Math.min(100, (p.position / p.duration) * 100)}%`;
@@ -270,4 +278,7 @@
 
   // 初始拉取设置
   api.settings.get().then((s) => { if (s && s.lyrics) applySettings(s.lyrics); });
+  // 窗口刚加载好，主动索要一次歌词（否则可能错过开窗时的那条同步消息）
+  api.lyrics.requestSync().catch(() => {});
+  window.addEventListener('DOMContentLoaded', () => { api.lyrics.requestSync().catch(() => {}); });
 })();

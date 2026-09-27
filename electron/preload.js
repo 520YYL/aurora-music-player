@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld('aurora', {
     setAlwaysOnTop: (on) => invoke('lyricsWin:setAlwaysOnTop', on),
     resetPos: () => invoke('lyricsWin:resetPos'),
     sync: (payload) => invoke('lyricsWin:sync', payload),
+    requestSync: () => invoke('overlay:requestSync'),
     getBounds: () => invoke('lyricsWin:getBounds')
   },
   mini: {

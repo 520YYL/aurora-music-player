@@ -423,8 +423,13 @@
   function syncOverlays(full) {
     const st = App.player.state();
     const t = st.current;
+    // 歌词正文每次都带上：浮层/迷你窗口可能是在歌词载入「之后」才被创建的，
+    // 只发一次的 full 消息会丢掉，导致它们永远显示「暂无歌词」。
+    // 37 行歌词约 1~2KB，4Hz 的同步量可以忽略。
+    const lines = App.lyrics.lines.map((l) => ({ t: l.t, text: l.text, tr: l.tr, isCJK: l.isCJK }));
     const payload = {
-      full: !!full,
+      full: true,
+      lyricVersion: App.lyrics.sourcePath || App.lyrics.title || '',
       title: t ? (t.title || t.name) : '',
       artist: t ? (t.artist || '') : '',
       album: t ? (t.album || '') : '',
@@ -436,7 +441,7 @@
       mode: st.mode,
       lyricIndex: App.lyrics.current,
       lyricProgress: App.lyrics.progress(st.position),
-      lines: full ? App.lyrics.lines.map((l) => ({ t: l.t, text: l.text, tr: l.tr, isCJK: l.isCJK })) : undefined,
+      lines,
       settings: { lyrics: App.settings.lyrics, mini: App.settings.mini },
       degraded: st.degraded
     };
@@ -1313,6 +1318,8 @@
       if (App.state.view === 'plugins') App.render();
     });
     api.on('shortcut:action', ({ action }) => runAction(action));
+    // 浮层/迷你窗口刚加载好时主动索要一次，避免开窗瞬间的空白
+    api.on('overlay:request-sync', () => syncOverlays(true));
     api.on('lyrics:settings', () => { /* 桌面歌词窗口自行处理 */ });
     window.addEventListener('beforeunload', () => { App.player.flushStats({ reason: 'quit' }); });
     window.addEventListener('aurora:degraded', () => {

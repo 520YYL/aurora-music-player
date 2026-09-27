@@ -985,6 +985,8 @@ function setupIpc() {
     return { ok: true };
   });
   handle('lyricsWin:sync', (e, payload) => { broadcast('lyrics:sync', payload); return { ok: true }; });
+  // 浮层/迷你窗口加载完成后主动索要一次同步（解决开窗时丢掉首条消息的问题）
+  handle('overlay:requestSync', () => { broadcast('overlay:request-sync', {}); return { ok: true }; });
   handle('lyricsWin:getBounds', () => (lyricsWindow && !lyricsWindow.isDestroyed() ? lyricsWindow.getBounds() : null));
 
   // 迷你播放器
@@ -1912,10 +1914,31 @@ function runSmokeTest() {
         sample: Object.entries(stats.tracks || {}).slice(0, 3).map(([k, v]) => ({ id: k, ms: v.ms, count: v.count }))
       };
       // 桌面歌词窗口
+      // 关键：必须先彻底关闭已有窗口，用「全新创建的窗口」来测。
+      // 复用旧窗口时它早就收到过歌词了，会掩盖「开窗瞬间丢掉同步消息」的 bug。
       smokePhase('lyrics-window');
       try {
+        // 先让一首有歌词的歌在播放
+        smoke.lyricsWindowTrack = await evalJs(`(async () => {
+          const A = window.App;
+          const t = A.state.tracks.find(x => /琴师/.test(x.title || '') || /琴师/.test(x.name || ''));
+          if (!t) return null;
+          const idx = A.state.tracks.findIndex(x => x.id === t.id);
+          A.player.setQueue(A.state.tracks, idx);
+          await new Promise(r => setTimeout(r, 2600));
+          // 再跳到「歌词中段」：这样浮层必定处于「有当前句」的状态，
+          // 而不是前奏期（前奏期只会显示即将开始的那句，测不出主路径）
+          const lines = A.lyrics.lines;
+          if (lines.length > 2) A.player.seek(lines[1].t + 1);
+          await new Promise(r => setTimeout(r, 1400));
+          return { title: t.title, lyricLines: A.lyrics.lines.length, index: A.lyrics.current, position: Number(A.engine.position().toFixed(1)) };
+        })()`);
+
+        if (lyricsWindow && !lyricsWindow.isDestroyed()) { lyricsWindow.close(); await sleep(1000); }
+        if (miniWindow && !miniWindow.isDestroyed()) { miniWindow.close(); await sleep(600); }
+
         toggleDesktopLyrics(true);
-        await sleep(2500);
+        await sleep(3500);
         smoke.lyricsWindow = {
           created: !!(lyricsWindow && !lyricsWindow.isDestroyed()),
           visible: !!(lyricsWindow && lyricsWindow.isVisible()),
@@ -1923,18 +1946,52 @@ function runSmokeTest() {
         };
         const lw = lyricsWindow;
         if (lw) {
-          smoke.lyricsWindow.render = await lw.webContents.executeJavaScript(`(() => ({ hasApi: !!window.aurora, lines: (window.__lyLines||0), cur: (document.getElementById('cur')||{}).textContent || '', errs: window.__auroraErrors || [] }))()`).catch((e) => 'eval-fail: ' + e.message);
+          smoke.lyricsWindow.render = await lw.webContents.executeJavaScript(`(() => {
+            const cur = document.getElementById('cur');
+            const empty = document.getElementById('empty');
+            const nxt = document.getElementById('nxt');
+            return {
+              hasApi: !!window.aurora,
+              cur: cur ? cur.textContent : null,
+              curVisible: cur ? !cur.classList.contains('hidden') : null,
+              next: nxt ? nxt.textContent : null,
+              emptyShown: empty ? !empty.classList.contains('hidden') : null,
+              emptyText: empty ? empty.textContent : null,
+              errs: window.__auroraErrors || []
+            };
+          })()`).catch((e) => 'eval-fail: ' + e.message);
         }
-        toggleDesktopLyrics(false);
-      } catch (e) { smoke.errors.push('lyricsWindow: ' + e.message); }
-      // 迷你播放器窗口
-      try {
+        // 迷你播放器也用全新窗口验证（它同样依赖这条同步消息）
         toggleMini(true);
-        await sleep(2000);
+        await sleep(2500);
         smoke.miniWindow = { created: !!(miniWindow && !miniWindow.isDestroyed()), visible: !!(miniWindow && miniWindow.isVisible()) };
-        if (miniWindow) smoke.miniWindow.render = await miniWindow.webContents.executeJavaScript(`(() => ({ hasApi: !!window.aurora, title: (document.getElementById('title')||{}).textContent, errs: window.__auroraErrors || [] }))()`).catch((e) => 'eval-fail: ' + e.message);
+        if (miniWindow) {
+          smoke.miniWindow.render = await miniWindow.webContents.executeJavaScript(`(() => ({
+            hasApi: !!window.aurora,
+            title: (document.getElementById('title') || {}).textContent,
+            artist: (document.getElementById('artist') || {}).textContent,
+            lyric: (document.getElementById('lyric') || {}).textContent,
+            errs: window.__auroraErrors || []
+          }))()`).catch((e) => 'eval-fail: ' + e.message);
+        }
         toggleMini(false);
-      } catch (e) { smoke.errors.push('miniWindow: ' + e.message); }
+        toggleDesktopLyrics(false);
+
+        // 断言：全新的桌面歌词窗口必须显示当前歌词，绝不能是「暂无歌词」
+        const r = smoke.lyricsWindow.render;
+        if (typeof r === 'string') smoke.errors.push('桌面歌词窗口无法读取: ' + r);
+        else if (r) {
+          if (r.emptyShown) smoke.errors.push('桌面歌词新建窗口后显示空白提示而不是歌词: ' + JSON.stringify(r.emptyText));
+          if (String(r.cur || '').includes('暂无歌词')) smoke.errors.push('桌面歌词误报「暂无歌词」（开窗时丢了同步消息）');
+          const hasLine = r.curVisible && String(r.cur || '').trim().length > 0;
+          const prelude = !r.curVisible && String(r.next || '').trim().length > 0;   // 前奏期显示第一句
+          if (!hasLine && !prelude) smoke.errors.push('桌面歌词新建窗口后没有显示任何歌词: ' + JSON.stringify(r));
+        }
+        const mr = smoke.miniWindow.render;
+        if (mr && typeof mr !== 'string') {
+          if (!mr.title || mr.title === '未播放') smoke.errors.push('迷你播放器新建窗口后没有显示曲目信息: ' + JSON.stringify(mr));
+        }
+      } catch (e) { smoke.errors.push('lyricsWindow: ' + e.message); }
     } catch (err) {
       smoke.errors.push('smoke-fatal: ' + String(err && err.stack ? err.stack : err));
     }

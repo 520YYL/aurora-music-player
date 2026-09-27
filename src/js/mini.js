@@ -65,9 +65,12 @@
     const modeMap = { sequential: '🔁', 'repeat-all': '🔁', 'repeat-one': '🔂', shuffle: '🔀' };
     $('#mode').textContent = modeMap[p.mode] || '🔁';
     if (p.lines && p.lines.length) {
-      const l = p.lines[p.lyricIndex];
+      // 前奏期间（还没唱到第一句）显示即将开始的那句，而不是留空
+      const l = p.lines[p.lyricIndex] || (p.lyricIndex < 0 ? p.lines[0] : null);
       $('#lyric').textContent = l ? l.text : '';
-    } else if (p.full) $('#lyric').textContent = '';
+    } else {
+      $('#lyric').textContent = '';
+    }
   });
 
   api.on('mini:settings', (m) => applySettings(m));
@@ -91,4 +94,6 @@
   };
   document.addEventListener('contextmenu', (e) => e.preventDefault());
   api.settings.get().then((s) => { if (s && s.mini) applySettings(s.mini); });
+  // 窗口刚加载好，主动索要一次（否则会错过开窗时的同步消息，导致不显示曲目/歌词）
+  api.lyrics.requestSync().catch(() => {});
 })();
