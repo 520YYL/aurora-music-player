@@ -150,6 +150,20 @@ input[type="range"]::-webkit-slider-thumb {
 input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.16); }
 input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
 
+/* 下拉框：弹出的选项列表由系统绘制（Windows 上默认白底），
+   必须显式指定选项的文字与背景色，否则深色主题下会出现「白字白底看不见」。 */
+select option, select optgroup {
+  background-color: #ffffff;
+  color: #1b1f2a;
+}
+html[data-theme="glass"] select option, html[data-theme="glass"] select optgroup,
+html[data-theme="skeuo"] select option, html[data-theme="skeuo"] select optgroup,
+html[data-theme="midnight"] select option, html[data-theme="midnight"] select optgroup {
+  background-color: #1e2130;
+  color: #eef1ff;
+}
+select option:checked, select option:hover { background-color: var(--accent); color: #fff; }
+
 .panel {
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: var(--shadow); backdrop-filter: blur(var(--blur)) saturate(1.35);

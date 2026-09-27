@@ -1503,6 +1503,61 @@ function runSmokeTest() {
       if (smoke.sidebar && !smoke.sidebar.addFolderWired) smoke.errors.push('添加文件夹按钮未接线');
       if (smoke.sidebar && !smoke.sidebar.newPlaylistWired) smoke.errors.push('新建播放列表按钮未接线');
 
+      // 拖动排序：抓手是否存在、顺序是否生效、下拉是否同步、是否落盘（结束后恢复原顺序）
+      smokePhase('reorder');
+      smoke.reorder = await evalJs(`(async () => {
+        const A = window.App;
+        A.setView('library');
+        await new Promise(r => setTimeout(r, 400));
+        const rows = () => Array.from(document.querySelectorAll('.track-row'));
+        if (rows().length < 3) return { skipped: true, rows: rows().length };
+        const handles = rows().slice(0, 3).map(r => ({ drag: !!r.querySelector('.t-drag'), menu: !!r.querySelector('.t-menu') }));
+        const original = rows().map(r => r.dataset.id);
+        const out = { handlesOk: handles.every(h => h.drag && h.menu), handles };
+
+        // ① 模拟真实拖拽：派发 dragstart / dragover / dragend，走真正的处理逻辑
+        const srcRow = rows()[0];
+        const dstRow = rows()[2];
+        const dt = new DataTransfer();
+        const fire = (el, type, extra = {}) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, extra)));
+        const grab = srcRow.querySelector('.t-drag') || srcRow;
+        fire(grab, 'dragstart');
+        const rc = dstRow.getBoundingClientRect();
+        fire(dstRow, 'dragover', { clientY: rc.top + rc.height * 0.9, clientX: rc.left + 40 });
+        const during = rows().map(r => r.dataset.id).slice(0, 3);
+        fire(grab, 'dragend');
+        await new Promise(r => setTimeout(r, 700));
+        const afterDrag = rows().map(r => r.dataset.id).slice(0, 3);
+        out.syntheticDuring = during;
+        out.syntheticAfter = afterDrag;
+        out.syntheticOk = afterDrag[0] === original[1] && afterDrag[2] === original[0];
+        await A.applyManualOrder(original);
+        await new Promise(r => setTimeout(r, 400));
+
+        // ② 数据层：顺序生效 / 落盘 / 下拉同步
+        const moved = [original[2], original[0], original[1]].concat(original.slice(3));
+        await A.applyManualOrder(moved);
+        await new Promise(r => setTimeout(r, 500));
+        const after = rows().map(r => r.dataset.id);
+        const sel = document.querySelector('.toolbar select');
+        const lib = await window.aurora.library.get();
+        out.orderOk = after[0] === moved[0] && after[1] === moved[1] && after[2] === moved[2];
+        out.sortKey = A.state.sortKey;
+        out.sortSelectValue = sel ? sel.value : null;
+        out.persisted = ((lib.tracks || [])[0] || {}).id === moved[0];
+        await A.applyManualOrder(original);   // 恢复用户原有顺序
+        await new Promise(r => setTimeout(r, 400));
+        out.restored = rows().map(r => r.dataset.id)[0] === original[0];
+        return out;
+      })()`);
+      if (smoke.reorder && !smoke.reorder.skipped) {
+        if (!smoke.reorder.handlesOk) smoke.errors.push('列表行缺少拖拽抓手: ' + JSON.stringify(smoke.reorder.handles));
+        if (!smoke.reorder.syntheticOk) smoke.errors.push('模拟拖拽没能改变顺序（拖拽事件处理有问题）: ' + JSON.stringify(smoke.reorder.syntheticDuring) + ' -> ' + JSON.stringify(smoke.reorder.syntheticAfter));
+        if (!smoke.reorder.orderOk) smoke.errors.push('拖动排序后顺序不正确');
+        if (smoke.reorder.sortSelectValue !== 'manual') smoke.errors.push('拖动排序后「排序」下拉没有同步为自定义排序');
+        if (!smoke.reorder.persisted) smoke.errors.push('拖动排序没有写入磁盘');
+      }
+
       // 实时累计听歌时长（回归测试：曾经「累计」标签在正在播放页永远显示 00:00）
       smokePhase('cumulative');
       smoke.cumulative = await evalJs(`(async () => {

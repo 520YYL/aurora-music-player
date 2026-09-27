@@ -76,23 +76,26 @@
 
 .track-list { position: relative; }
 .track-row {
-  height: var(--row-h); border-radius: calc(var(--radius) / 1.7); cursor: default; font-size: 13px;
+  height: var(--row-h); border-radius: calc(var(--radius) / 1.7); cursor: grab; font-size: 13px;
   transition: background var(--dur) var(--ease), transform .18s var(--ease), box-shadow var(--dur);
   will-change: transform;
 }
+.track-row:active { cursor: grabbing; }
+.track-row .btn, .track-row button { cursor: pointer; }
 .track-row:hover { background: var(--hover); }
 .track-row.playing { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 26%, transparent), transparent 70%); }
 .track-row.playing .t-title { color: var(--accent); }
 .track-row.dragging { opacity: .35; }
-.track-row.drop-above { box-shadow: inset 0 2px 0 var(--accent); }
-.track-row.drop-below { box-shadow: inset 0 -2px 0 var(--accent); }
+.track-row.dragging > * { pointer-events: none; }
+.track-row.drop-above { box-shadow: inset 0 3px 0 var(--accent); }
+.track-row.drop-below { box-shadow: inset 0 -3px 0 var(--accent); }
 .track-row.selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .t-idx { text-align: center; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; position: relative; }
 .t-idx .play-mini { display: none; }
 .track-row:hover .t-idx .num { display: none; }
 .track-row:hover .t-idx .play-mini { display: inline; cursor: pointer; color: var(--accent); }
-.t-drag { cursor: grab; opacity: 0; color: var(--muted); font-size: 14px; text-align: center; }
-.track-row:hover .t-drag { opacity: .65; }
+.t-drag { cursor: grab; opacity: .32; color: var(--muted); font-size: 14px; text-align: center; transition: opacity var(--dur); }
+.track-row:hover .t-drag { opacity: .75; }
 .t-drag:active { cursor: grabbing; }
 .t-cover { width: 36px; height: 36px; border-radius: 8px; object-fit: cover; background: var(--panel-2); display: block; }
 .t-cover.ph { display: flex; align-items: center; justify-content: center; font-size: 15px; color: var(--muted); }
@@ -103,6 +106,10 @@
 .t-actions { display: flex; gap: 2px; justify-content: flex-end; opacity: 0; transition: opacity var(--dur); }
 .track-row:hover .t-actions { opacity: 1; }
 .t-actions .btn.icon { width: 26px; height: 26px; padding: 0; font-size: 12px; }
+/* 最右侧的 ☰ 同时是「拖动排序」的抓手：按住它上下拖就能换位置 */
+.t-menu { cursor: grab; user-select: none; }
+.t-menu:hover { background: var(--active) !important; }
+.t-menu:active, .track-row.dragging .t-menu { cursor: grabbing; }
 .fav-on { color: #ff5f7e !important; }
 .badge-fmt { font-size: 10px; padding: 1px 5px; border-radius: 5px; background: var(--panel-strong); }
 .lossless { color: #ffcf5c; }

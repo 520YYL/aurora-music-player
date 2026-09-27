@@ -126,7 +126,8 @@
 
     app.sortable = window.DragSort.makeSortable(listEl, {
       itemSelector: '.track-row',
-      handleSelector: '.t-drag',
+      // 不限制抓手：整行都可以按住拖动排序（♥ 等按钮除外），
+      // 这样不用去瞄准那个很小的 ⠿ 图标
       scrollParent: body,
       onReorder: (ids) => app.applyManualOrder(ids)
     });
@@ -163,8 +164,13 @@
     el.appendChild(ce('div', { class: 't-cell', text: U.fmtMs(playedMs), title: `累计听歌 ${U.fmtLong(playedMs)}` }));
     el.appendChild(ce('div', { class: 't-cell', text: `${t.playCount || 0} 次` }));
     const actions = ce('div', { class: 't-actions' }, [
-      ce('button', { class: `btn icon ghost${t.favorite ? ' fav-on' : ''}`, text: t.favorite ? '♥' : '♡', title: '收藏', onclick: (e) => { e.stopPropagation(); app.toggleFavorite(t.id); } }),
-      ce('button', { class: 'btn icon ghost', text: '≡', title: '更多', onclick: (e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); app.contextMenuAt(r.left - 150, r.bottom + 4, t); } })
+      ce('button', { class: `btn icon ghost${t.favorite ? ' fav-on' : ''}`, text: t.favorite ? '♥' : '♡', title: '收藏 (Ctrl+D)', onclick: (e) => { e.stopPropagation(); app.toggleFavorite(t.id); } }),
+      // 用 span 而不是 button：Chromium 里 button 上按住拖动不会触发 HTML5 拖拽事件
+      ce('span', {
+        class: 'btn icon ghost t-menu', text: '☰',
+        title: '按住上下拖动可调整顺序 · 单击打开菜单',
+        onclick: (e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); app.contextMenuAt(r.left - 150, r.bottom + 4, t); }
+      })
     ]);
     el.appendChild(actions);
 

@@ -924,9 +924,10 @@
     App.state.tracks = [...ids.map((id) => map.get(id)).filter(Boolean), ...rest];
     App.state.sortKey = 'manual';
     App.settings.ui.sortKey = 'manual';
-    await api.library.reorder(ids);
     api.settings.set('ui.sortKey', 'manual');
-    updateCounts();
+    await api.library.reorder(ids);
+    // 重绘一次：让「排序」下拉同步显示「自定义排序」，并把左侧序号刷新
+    App.render();
   };
 
   App.addFolder = async function () {

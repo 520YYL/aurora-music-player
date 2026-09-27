@@ -15,9 +15,10 @@
       const dy = a.top - b.top;
       if (Math.abs(dy) > 1) {
         try {
-          el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'translateY(0)' }], {
-            duration: 190, easing: 'cubic-bezier(.4,0,.2,1)'
-          });
+          el.animate(
+            [{ transform: `translateY(${dy}px)` }, { transform: 'translateY(0)' }],
+            { duration: 230, easing: 'cubic-bezier(.2,.85,.25,1)' }
+          );
         } catch { /* ignore */ }
       }
     }
@@ -36,14 +37,16 @@
     container.addEventListener('dragstart', (e) => {
       const el = e.target.closest(itemSel);
       if (!el || !container.contains(el)) return;
-      if (opts.handleSelector) {
-        const handle = e.target.closest(opts.handleSelector);
-        if (!handle) { e.preventDefault(); return; }
-      }
+      // 按钮等交互控件上不启动拖拽，保证它们的点击照常工作
+      const exSel = opts.excludeSelector === undefined ? 'button, a, input, select, textarea' : opts.excludeSelector;
+      if (exSel && e.target.closest(exSel)) { e.preventDefault(); return; }
+      // 指定了抓手时只允许从抓手开始拖拽；不指定则整行都可拖
+      if (opts.handleSelector && !e.target.closest(opts.handleSelector)) { e.preventDefault(); return; }
       state.dragEl = el;
       state.active = true;
       state.startOrder = items().map((x) => x.dataset.id);
       el.classList.add('dragging');
+      container.classList.add('drag-active');
       try {
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', el.dataset.id || '');
@@ -52,6 +55,7 @@
 
     container.addEventListener('dragend', () => {
       if (state.dragEl) state.dragEl.classList.remove('dragging');
+      container.classList.remove('drag-active');
       for (const el of items()) el.classList.remove('drop-above', 'drop-below');
       if (state.active) {
         const order = items().map((x) => x.dataset.id);
