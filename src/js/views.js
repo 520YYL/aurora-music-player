@@ -212,7 +212,7 @@
         ce('span', { class: 'chip', text: `${t.bitrate ? Math.round(t.bitrate / 1000) + ' kbps' : '—'}` }),
         ce('span', { class: 'chip', text: `${t.sampleRate ? (t.sampleRate / 1000).toFixed(1) + ' kHz' : '—'}` }),
         ce('span', { class: 'chip', text: t.channels === 2 ? '立体声' : (t.channels === 1 ? '单声道' : '—') }),
-        ce('span', { class: 'chip', text: `累计 ${U.fmtMs(app.trackPlayedMs(t.id))}` })
+        ce('span', { class: 'chip', id: 'npCumulative', text: `累计 ${U.fmtMs(app.trackLivePlayedMs(t.id))}` })
       ]);
       info.appendChild(meta);
       const ops = ce('div', { class: 'row', style: { marginTop: '12px', gap: '8px', flexWrap: 'wrap' } }, [

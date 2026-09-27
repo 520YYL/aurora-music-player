@@ -1463,6 +1463,31 @@ function runSmokeTest() {
       if (smoke.sidebar && !smoke.sidebar.addFolderWired) smoke.errors.push('添加文件夹按钮未接线');
       if (smoke.sidebar && !smoke.sidebar.newPlaylistWired) smoke.errors.push('新建播放列表按钮未接线');
 
+      // 实时累计听歌时长（回归测试：曾经「累计」标签在正在播放页永远显示 00:00）
+      smokePhase('cumulative');
+      smoke.cumulative = await evalJs(`(async () => {
+        const A = window.App;
+        const t = A.player.current;
+        if (!t) return { skipped: true };
+        A.setView('now');
+        await new Promise(r => setTimeout(r, 400));
+        const before = A.trackLivePlayedMs(t.id);
+        const chip1 = (document.getElementById('npCumulative') || {}).textContent || null;
+        await new Promise(r => setTimeout(r, 7000));
+        const after = A.trackLivePlayedMs(t.id);
+        const chip2 = (document.getElementById('npCumulative') || {}).textContent || null;
+        return {
+          track: t.title, before, after, deltaMs: Math.round(after - before),
+          chipBefore: chip1, chipAfter: chip2,
+          advanced: after > before, chipChanged: chip1 !== chip2,
+          chipMatches: A.trackLivePlayedMs(t.id) === after
+        };
+      })()`);
+      if (smoke.cumulative && !smoke.cumulative.skipped) {
+        if (!smoke.cumulative.advanced) smoke.errors.push('累计听歌时长没有随时间增长');
+        if (!smoke.cumulative.chipChanged) smoke.errors.push('正在播放页的「累计」标签没有实时刷新（' + smoke.cumulative.chipBefore + ' -> ' + smoke.cumulative.chipAfter + '）');
+      }
+
       // 统计写入检查
       smokePhase('stats');
       await sleep(1500);

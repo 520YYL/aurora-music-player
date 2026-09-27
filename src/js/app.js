@@ -97,6 +97,8 @@
       updateNowPlayingUi();
       loadLyricsFor(track);
       if (App.state.view === 'library') markPlayingRow();
+      // 正在播放页是整页快照：切歌时必须重绘，否则封面/标题/累计会一直停在上一首
+      if (App.state.view === 'now') App.render();
       syncOverlays(true);
     });
     App.player.on('state', () => { updatePlayButton(); syncOverlays(false); });
@@ -215,6 +217,17 @@
   App.trackPlayedMs = function (id) {
     const s = App.state.stats || {};
     return (s.tracks && s.tracks[id] && s.tracks[id].ms) || 0;
+  };
+
+  /**
+   * 实时累计听歌时长 = 已落盘的部分 + 本次还没写入磁盘的部分。
+   * 统计每 5 秒才写一次磁盘，所以直接读 trackPlayedMs 会「卡住不动」。
+   */
+  App.trackLivePlayedMs = function (id) {
+    const base = App.trackPlayedMs(id);
+    const p = App.player;
+    const pending = p && p.current && p.current.id === id ? (p._pendingMs || 0) : 0;
+    return base + pending;
   };
 
   App.render = function render() {
@@ -566,6 +579,17 @@
     $('#volume').style.setProperty('--fill', `${$('#volume').value}%`);
   }
 
+  /** 只在实际文本变化时才写 DOM，避免每秒多次重排 */
+  function updatePlayedChips() {
+    const t = App.player.current;
+    const text = `累计 ${U.fmtMs(t ? App.trackLivePlayedMs(t.id) : 0)}`;
+    const cum = $('#npCumulative');
+    if (cum && cum.textContent !== text) cum.textContent = text;
+    const bar = $('#npPlayed');
+    const barText = `已听 ${U.fmtMs(t ? App.trackLivePlayedMs(t.id) : 0)}`;
+    if (bar && bar.textContent !== barText) bar.textContent = barText;
+  }
+
   function updateNowPlayingUi() {
     const t = App.player.current;
     const cover = $('#npCover');
@@ -581,8 +605,10 @@
     $('#npTitle').textContent = t ? (t.title || t.name) : '未播放';
     $('#npArtist').textContent = t ? `${t.artist || '未知歌手'}${t.album ? ' · ' + t.album : ''}` : '选择一首歌开始';
     $('#npFormat').textContent = t ? `${(t.format || '').toUpperCase()}${t.bitrate ? ' · ' + Math.round(t.bitrate / 1000) + 'k' : ''}` : '—';
-    const played = t ? App.trackPlayedMs(t.id) : 0;
+    const played = t ? App.trackLivePlayedMs(t.id) : 0;
     $('#npPlayed').textContent = `已听 ${U.fmtMs(played)}`;
+    const cum0 = $('#npCumulative');
+    if (cum0) cum0.textContent = `累计 ${U.fmtMs(played)}`;
     updateFavButton();
     updatePlayButton();
     document.title = t ? `${t.title || t.name} - ${t.artist || '未知歌手'} · Aurora 极光音乐` : 'Aurora 极光音乐';
@@ -606,6 +632,7 @@
     $('#tCur').textContent = U.fmtTime(pos);
     $('#tDur').textContent = U.fmtTime(dur);
     $('#vizTime').textContent = U.fmtTime(pos);
+    updatePlayedChips();
 
     // 歌词同步
     if (App.lyrics.lines.length) {
