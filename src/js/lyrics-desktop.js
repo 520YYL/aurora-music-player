@@ -18,6 +18,11 @@
   let curIdx = -1;
   let L = {};
   let gotPayload = false;   // 是否已经收到过同步数据（没收到前不要显示「暂无歌词」）
+  let settingsKey = '';     // 上一次应用的外观设置指纹
+  let linesKey = '';        // 上一次应用的歌词指纹
+  let preludeText = '';     // 前奏期正在显示的那句
+  // 性能计数：用来验证「不会每秒反复重建 DOM / 反复改窗口大小」
+  window.__perf = { sync: 0, linesApplied: 0, rendered: 0, resizes: 0 };
 
   function applySettings(s) {
     if (!s) return;
@@ -65,6 +70,7 @@
   function setLines(newLines) {
     lines = newLines || [];
     curIdx = -1;
+    preludeText = '';
     renderLine(true);
   }
 
@@ -88,20 +94,25 @@
       el.cur.classList.add('hidden');
       el.tr.classList.add('hidden');
       // 注意：同步消息里的字段是 position（秒），不是 current
-      if (payload && payload.duration) {
-        el.nxt.textContent = lines[0].text;
-        el.nxt.style.fontFamily = lines[0].isCJK ? (L.cnFont || '') : (L.enFont || '');
+      const wanted = (payload && payload.duration && lines[0]) ? lines[0].text : '';
+      if (wanted) {
+        if (preludeText !== wanted) {
+          preludeText = wanted;
+          el.nxt.textContent = wanted;
+          el.nxt.style.fontFamily = lines[0].isCJK ? (L.cnFont || '') : (L.enFont || '');
+          scheduleResize();
+        }
         el.nxt.classList.remove('hidden');
       } else {
         el.nxt.classList.add('hidden');
       }
-      scheduleResize();
       return;
     }
     el.empty.classList.add('hidden');
     el.cur.classList.remove('hidden');
     if (curIdx !== i || force) {
       curIdx = i;
+      window.__perf.rendered++;
       el.cur.innerHTML = '';
       const src = document.createElement('span');
       src.className = 'src';
@@ -146,7 +157,10 @@
     resizeTimer = setTimeout(() => {
       const needed = el.root.scrollHeight + 24;
       const cur = window.innerHeight;
-      if (Math.abs(needed - cur) > 10) api.app.setSize(window.innerWidth, Math.max(110, Math.min(480, needed)));
+      if (Math.abs(needed - cur) > 10) {
+        window.__perf.resizes++;
+        api.app.setSize(window.innerWidth, Math.max(110, Math.min(480, needed)));
+      }
     }, 160);
   }
 
@@ -154,9 +168,19 @@
     if (!p) return;
     gotPayload = true;
     payload = p;
-    if (p.settings && p.settings.lyrics) applySettings(p.settings.lyrics);
+    window.__perf.sync++;
+    // 外观设置只在真的变了时才应用：applySettings 末尾会校正窗口高度，
+    // 如果每次同步都调用，透明浮层会被每秒 4 次改尺寸 —— 观感就是「一卡一卡」。
+    if (p.settings && p.settings.lyrics) {
+      const key = JSON.stringify(p.settings.lyrics);
+      if (key !== settingsKey) { settingsKey = key; applySettings(p.settings.lyrics); }
+    }
     if (p.settings && p.settings.theme) document.documentElement.dataset.theme = p.settings.theme;
-    if (p.lines) setLines(p.lines);
+    // 歌词正文同样只在内容变化时才重建 DOM
+    if (p.lines) {
+      const key = `${p.lines.length}|${p.lines[0] ? p.lines[0].text : ''}|${p.lyricVersion || ''}`;
+      if (key !== linesKey) { linesKey = key; window.__perf.linesApplied++; setLines(p.lines); }
+    }
     renderLine(false);
     el.btnPlay.textContent = p.playing ? '⏸' : '▶';
     if (L.showProgressBar && p.duration) el.bar.style.width = `${Math.min(100, (p.position / p.duration) * 100)}%`;

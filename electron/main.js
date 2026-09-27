@@ -1961,6 +1961,23 @@ function runSmokeTest() {
             };
           })()`).catch((e) => 'eval-fail: ' + e.message);
         }
+        // 卡顿回归测试：播放中浮层不应反复重建 DOM、也不应反复改窗口大小
+        if (lw && !lw.isDestroyed()) {
+          try {
+            const perfA = await lw.webContents.executeJavaScript('window.__perf', true);
+            await sleep(3200);
+            const perfB = await lw.webContents.executeJavaScript('window.__perf', true);
+            smoke.overlayPerf = {
+              a: perfA, b: perfB,
+              syncDelta: perfB.sync - perfA.sync,
+              renderDelta: perfB.rendered - perfA.rendered,
+              linesDelta: perfB.linesApplied - perfA.linesApplied,
+              resizeDelta: perfB.resizes - perfA.resizes
+            };
+            if (smoke.overlayPerf.linesDelta > 0) smoke.errors.push('桌面歌词播放中反复重建歌词 DOM（会卡顿）: ' + smoke.overlayPerf.linesDelta);
+            if (smoke.overlayPerf.resizeDelta > 1) smoke.errors.push('桌面歌词播放中反复改变窗口大小（会卡顿）: ' + smoke.overlayPerf.resizeDelta);
+          } catch (e) { smoke.errors.push('overlayPerf: ' + e.message); }
+        }
         // 迷你播放器也用全新窗口验证（它同样依赖这条同步消息）
         toggleMini(true);
         await sleep(2500);
