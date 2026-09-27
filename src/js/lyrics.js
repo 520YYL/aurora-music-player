@@ -93,8 +93,25 @@
     }
 
     // 纯翻译行归并到上一行（形如 [00:12.00] 英文 紧跟 [00:12.00] 中文 已在上面处理）
-    const out = merged.filter((l) => l.text !== '' || l.tr);
-    return { meta, lines: out, bilingual: out.some((l) => l.tr) };
+    // 过滤开头的「制作信息」：作词/作曲/版权管理/版权所有… 这些不是歌词。
+    // 只在还没有出现任何真正歌词之前过滤，避免误删正文里出现的同名词。
+    const CREDIT_RE = [
+      /^\s*(作词|作曲|编曲|填词|词|曲|制作人|出品人|出品|监制|混音|母带|录音|和声|配唱|吉他|贝斯|鼓|键盘|弦乐|人声|策划|统筹|封面|设计|发行|推广|音乐总监|录音师|混音师|翻译|上传|LRC歌词|歌词制作|OP|SP)\s*[:：]/i,
+      /版权管理|版权所有|未经许可|请勿翻唱|请勿侵权|all rights reserved/i
+    ];
+    const out = [];
+    let sawReal = false;
+    let creditsSkipped = 0;
+    for (const l of merged) {
+      if (l.text === '' && !l.tr) continue;
+      if (!sawReal && l.t <= 30 && CREDIT_RE.some((re) => re.test(l.text))) {
+        creditsSkipped++;
+        continue;
+      }
+      if (l.text && l.text.trim()) sawReal = true;
+      out.push(l);
+    }
+    return { meta, lines: out, bilingual: out.some((l) => l.tr), creditsSkipped };
   }
 
   /** 判断一行是否为纯时间标签（无文字），用于跳过 */
@@ -108,6 +125,7 @@
       this.raw = '';
       this.sourcePath = null;
       this.title = '';
+      this.creditsSkipped = 0;
       this.onChange = opts && opts.onChange ? opts.onChange : () => {};
       this.offsetMs = 0;
     }
@@ -118,6 +136,7 @@
       this.current = -1;
       this.raw = '';
       this.sourcePath = null;
+      this.creditsSkipped = 0;
       this.onChange(this);
     }
 
@@ -136,6 +155,7 @@
       const parsed = parseLrc(text);
       this.lines = parsed.lines;
       this.meta = parsed.meta || {};
+      this.creditsSkipped = parsed.creditsSkipped || 0;
       this.raw = text;
       this.sourcePath = res.path || null;
       this.onChange(this);
@@ -146,6 +166,7 @@
       const parsed = parseLrc(text);
       this.lines = parsed.lines;
       this.meta = parsed.meta || {};
+      this.creditsSkipped = parsed.creditsSkipped || 0;
       this.raw = text;
       this.sourcePath = sourceName || null;
       this.current = -1;
@@ -216,7 +237,11 @@
 
   function scrollToActive(container, smooth = true) {
     const active = container.querySelector('.ly-line.active');
-    if (!active) return;
+    if (!active) {
+      // 还没唱到第一句：滚到最上面，让用户看到即将开始的那句
+      container.scrollTop = 0;
+      return;
+    }
     const box = container.getBoundingClientRect();
     const el = active.getBoundingClientRect();
     const target = container.scrollTop + (el.top - box.top) - box.height / 2 + el.height / 2;

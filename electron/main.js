@@ -1317,6 +1317,120 @@ function ensureTray() {
 }
 
 /* ------------------------------------------------------------------ */
+/* 截图模式： --shots  把正在播放页 / 桌面歌词 / 曲库 存成 PNG 便于检查     */
+/* ------------------------------------------------------------------ */
+async function captureShots() {
+  const dir = path.join(APP_ROOT, 'shots');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const wc = mainWindow.webContents;
+  const report = { dir, files: [] };
+
+  const shot = async (target, name) => {
+    try {
+      const img = await target.capturePage();
+      const buf = img.toPNG();
+      fs.writeFileSync(path.join(dir, name), buf);
+      report.files.push({ name, bytes: buf.length });
+      return true;
+    } catch (err) {
+      report.files.push({ name, error: String(err && err.message ? err.message : err) });
+      return false;
+    }
+  };
+
+  // 播放「琴师」并进入正在播放页
+  await wc.executeJavaScript(`(async () => {
+    const A = window.App;
+    const t = A.state.tracks.find(x => /琴师/.test(x.title || '') || /琴师/.test(x.name || ''));
+    if (t) {
+      const idx = A.state.tracks.findIndex(x => x.id === t.id);
+      A.player.setQueue(A.state.tracks, idx);
+    }
+    A.setView('now');
+    await new Promise(r => setTimeout(r, 3000));
+    return true;
+  })()`, true);
+  await sleep(600);
+  // 歌曲开头（用来确认制作信息行没有出现）
+  await wc.executeJavaScript(`window.App.player.seek(1.2)`, true);
+  await sleep(1200);
+  await shot(wc, '00-song-start.png');
+  // 跳到「某一句唱到一半」的位置：用来确认卡拉OK染色方向正确（唱过的部分应高亮）
+  const midDiag = await wc.executeJavaScript(`(async () => {
+    const A = window.App;
+    const lines = A.lyrics.lines;
+    let target = 95;
+    for (let i = 0; i < lines.length - 1; i++) {
+      if (lines[i + 1].t - lines[i].t > 8 && lines[i].t > 60) { target = (lines[i].t + lines[i + 1].t) / 2; break; }
+    }
+    if (A.engine.duration() > target + 30) A.player.seek(target);
+    await new Promise(r => setTimeout(r, 1600));
+    const act = document.querySelector('.ly-line.active');
+    const src = act ? act.querySelector('.src') : null;
+    return {
+      seekedTo: Number(target.toFixed(1)),
+      position: Number(A.engine.position().toFixed(1)),
+      index: A.lyrics.current,
+      progress: Number(A.lyrics.progress(A.engine.position()).toFixed(3)),
+      activeText: act ? act.textContent : null,
+      gradient: src ? getComputedStyle(src).backgroundImage : null,
+      fillPct: act ? getComputedStyle(act).getPropertyValue('--p') : null
+    };
+  })()`, true);
+  report.nowPlayingLyric = midDiag;
+  await sleep(900);
+  await shot(wc, '01-now-playing.png');
+
+  // 曲库列表
+  await wc.executeJavaScript(`window.App.setView('library')`, true);
+  await sleep(1000);
+  await shot(wc, '02-library.png');
+
+  // 设置页（外观）
+  await wc.executeJavaScript(`window.App.setView('settings')`, true);
+  await sleep(1200);
+  await shot(wc, '03-settings.png');
+
+  // 均衡器
+  await wc.executeJavaScript(`window.App.setView('eq')`, true);
+  await sleep(1000);
+  await shot(wc, '04-eq.png');
+
+  // 桌面歌词浮层：分别放在深色与浅色背景上截图，便于判断可读性
+  toggleDesktopLyrics(true);
+  await sleep(4000);
+  if (lyricsWindow && !lyricsWindow.isDestroyed()) {
+    try { lyricsWindow.setBounds({ x: 40, y: 60, width: 1080, height: 240 }); } catch { /* ignore */ }
+    const lw = lyricsWindow.webContents;
+    await sleep(1200);
+    try {
+      await lw.executeJavaScript(`document.documentElement.style.background='linear-gradient(135deg,#12203a,#3a1d4d 60%,#0d1117)'; document.body.style.background='transparent'; true`, true);
+    } catch { /* ignore */ }
+    await sleep(600);
+    await shot(lw, '05-desktop-lyrics-dark.png');
+    try {
+      report.overlayLyric = await lw.executeJavaScript(`(() => {
+        const cur = document.getElementById('cur');
+        return { text: cur ? cur.textContent : null, background: cur ? getComputedStyle(cur).backgroundImage : null, fill: cur ? cur.style.background : null };
+      })()`, true);
+    } catch { /* ignore */ }
+    try {
+      await lw.executeJavaScript(`document.documentElement.style.background='linear-gradient(135deg,#fdfdfd,#e8ecf4)'; true`, true);
+    } catch { /* ignore */ }
+    await sleep(600);
+    await shot(lw, '06-desktop-lyrics-light.png');
+    try { await lw.executeJavaScript(`document.documentElement.style.background='transparent'; true`, true); } catch { /* ignore */ }
+  }
+  toggleDesktopLyrics(false);
+  await sleep(400);
+
+  report.finishedAt = new Date().toISOString();
+  try { fs.writeFileSync(path.join(dir, 'shots.json'), JSON.stringify(report, null, 2)); } catch { /* ignore */ }
+  return report;
+}
+
+/* ------------------------------------------------------------------ */
 /* 自检实现                                                             */
 /* ------------------------------------------------------------------ */
 function runSmokeTest() {
@@ -1765,10 +1879,13 @@ function runSmokeTest() {
         const list = await window.aurora.lyrics.list();
         await A.lyrics.loadFor(t);
         const lines = A.lyrics.lines;
+        const creditRe = /(作词|作曲|编曲|制作人|出品|监制|混音|母带|版权|未经许可|请勿翻唱|OP|SP)\s*[:：]/;
         return {
           trackTitle: t.title,
           source: A.lyrics.sourcePath,
           lines: lines.length,
+          creditsSkipped: A.lyrics.creditsSkipped || 0,
+          firstLineIsCredit: lines.length ? creditRe.test(lines[0].text) : null,
           first3: lines.slice(0, 3).map(l => l.text),
           lastLine: lines.length ? lines[lines.length - 1].text : null,
           cachedFiles: list.map(f => f.name),
@@ -1780,6 +1897,8 @@ function runSmokeTest() {
       if (smoke.importedLyrics && !smoke.importedLyrics.skipped) {
         if (smoke.importedLyrics.lines < 5) smoke.errors.push(`导入的歌词没有正确解析（只有 ${smoke.importedLyrics.lines} 行）`);
         if (!smoke.importedLyrics.timedOk) smoke.errors.push('歌词时间轴顺序异常');
+        if (smoke.importedLyrics.firstLineIsCredit) smoke.errors.push('歌词开头仍显示「作词/作曲/版权」等制作信息: ' + smoke.importedLyrics.first3[0]);
+        if (!smoke.importedLyrics.creditsSkipped) smoke.errors.push('没有过滤掉开头的制作信息行');
       }
 
       // 统计写入检查
@@ -1821,6 +1940,9 @@ function runSmokeTest() {
     }
     smoke.finishedAt = new Date().toISOString();
     smoke.phase = 'done';
+    if (process.argv.includes('--shots')) {
+      try { smoke.shots = await captureShots(); } catch (err) { smoke.errors.push('shots: ' + String(err && err.message ? err.message : err)); }
+    }
     try { fs.writeFileSync(path.join(APP_ROOT, 'smoke-report.json'), JSON.stringify(smoke, null, 2)); } catch { /* ignore */ }
     try { settingsStore.save(); libraryStore.save(); statsStore.save(); } catch { /* ignore */ }
     quitting = true;

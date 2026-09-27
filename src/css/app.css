@@ -170,14 +170,34 @@
 .np-info h2 { margin: 0 0 6px; font-size: 21px; }
 .np-info .ar { color: var(--muted); font-size: 13.5px; }
 .np-right { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.lyrics-box { flex: 1; overflow-y: auto; padding: 30px 10px 40vh; scroll-behavior: smooth; mask-image: linear-gradient(180deg, transparent 0, #000 8%, #000 84%, transparent 100%); }
-.ly-line { padding: 9px 6px; font-size: 19px; color: color-mix(in srgb, var(--text) 42%, transparent); transition: all .3s var(--ease); cursor: pointer; line-height: 1.45; }
+.lyrics-box {
+  flex: 1; overflow-y: auto; padding: 26px 20px 42vh; scroll-behavior: smooth; text-align: center;
+  mask-image: linear-gradient(180deg, transparent 0, #000 9%, #000 80%, transparent 100%);
+}
+/* 行高固定不变、改用 transform 放大当前行：避免 font-size 变化把整段文字挤动 */
+.ly-line {
+  padding: 10px 10px; font-size: 19px; line-height: 1.5; cursor: pointer;
+  color: color-mix(in srgb, var(--text) 56%, transparent);
+  transform: scale(1); transform-origin: center center;
+  transition: color .3s var(--ease), transform .3s var(--ease), opacity .3s var(--ease);
+}
 .ly-line.zh { font-family: var(--ly-cn, var(--font)); }
 .ly-line.en { font-family: var(--ly-en, var(--font)); }
-.ly-line .tr { display: block; font-size: .78em; opacity: .62; margin-top: 3px; }
-.ly-line.active { color: var(--text); font-size: 25px; font-weight: 800; transform: scale(1.015); text-shadow: 0 2px 18px color-mix(in srgb, var(--accent) 40%, transparent); }
-.ly-line.past { color: color-mix(in srgb, var(--text) 62%, transparent); }
-.ly-line.active.karaoke .src { background: linear-gradient(90deg, var(--accent) var(--p, 0%), var(--text) var(--p, 0%)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.ly-line .tr { display: block; font-size: .76em; opacity: .6; margin-top: 3px; }
+.ly-line:hover { color: color-mix(in srgb, var(--text) 84%, transparent); }
+/* 已经唱过的行明显变暗，和「还没唱」拉开差距 */
+.ly-line.past { color: color-mix(in srgb, var(--text) 25%, transparent); }
+.ly-line.active {
+  color: var(--text); font-weight: 800; transform: scale(1.16);
+  text-shadow: 0 2px 20px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+.ly-line.active.karaoke .src {
+  /* 唱过的部分是主题色；还没唱的部分压暗，否则浅色文字比主题色更抢眼、看起来像反的 */
+  background: linear-gradient(90deg,
+    var(--accent) var(--p, 0%),
+    color-mix(in srgb, var(--text) 52%, transparent) var(--p, 0%));
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
 .ly-empty { color: var(--muted); text-align: center; padding: 60px 20px; font-size: 14px; line-height: 2; }
 
 /* ---------------------------- 统计 ---------------------------- */

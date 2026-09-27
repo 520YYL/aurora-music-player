@@ -71,13 +71,24 @@
     const i = payload ? payload.lyricIndex : -1;
     const active = lines[i];
     if (!active) {
-      el.empty.classList.toggle('hidden', lines.length > 0);
-      el.cur.textContent = lines.length ? '' : '';
       if (!lines.length) {
         el.cur.classList.add('hidden'); el.tr.classList.add('hidden'); el.nxt.classList.add('hidden');
         el.empty.classList.remove('hidden');
         el.empty.textContent = payload && payload.title ? `♪ ${payload.title} — 暂无歌词` : '等待播放…';
+        return;
       }
+      // 还没唱到第一句（前奏）：把第一句当作「即将开始」显示，避免整屏空白
+      el.empty.classList.add('hidden');
+      el.cur.classList.add('hidden');
+      el.tr.classList.add('hidden');
+      if (payload && payload.current > 0 && payload.duration) {
+        el.nxt.textContent = lines[0].text;
+        el.nxt.style.fontFamily = lines[0].isCJK ? (L.cnFont || '') : (L.enFont || '');
+        el.nxt.classList.remove('hidden');
+      } else {
+        el.nxt.classList.add('hidden');
+      }
+      scheduleResize();
       return;
     }
     el.empty.classList.add('hidden');
@@ -110,7 +121,9 @@
     // 卡拉OK染色
     if (L.karaoke !== false) {
       const p = Math.round((payload.lyricProgress || 0) * 1000) / 10;
-      el.cur.style.background = `linear-gradient(90deg, ${L.activeColor || '#7c5cff'} ${p}%, ${L.color || '#fff'} ${p}%)`;
+      // 唱过的部分用主题色；还没唱的部分压暗（纯白在深色壁纸上反而比主题色更抢眼）
+      const unsung = `color-mix(in srgb, ${L.color || '#ffffff'} 52%, transparent)`;
+      el.cur.style.background = `linear-gradient(90deg, ${L.activeColor || '#7c5cff'} ${p}%, ${unsung} ${p}%)`;
       el.cur.style.webkitBackgroundClip = 'text';
       el.cur.style.backgroundClip = 'text';
       el.cur.style.webkitTextFillColor = 'transparent';
