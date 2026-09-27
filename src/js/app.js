@@ -105,11 +105,29 @@
     App.player.on('time', () => { updateProgress(); });
     App.player.on('mode', () => { updateModeButton(); syncOverlays(false); });
     App.player.on('deck', (e) => {
-      if (e.type === 'ended') { /* 由 onEnded 处理 */ }
-      if (e.type === 'error' && e.deck && e.deck.track) {
-        U.toast(`无法播放：${e.deck.track.title || e.deck.track.name}`, 'err');
-        setTimeout(() => App.player.next(), 800);
+      if (e.type !== 'error' || !e.deck) return;
+      const t = e.deck.track;
+      if (!t) return;
+      const isActive = App.engine.active === e.deck.index;
+      const isCurrent = !!(App.player.current && t.id === App.player.current.id);
+      // 记录所有解码器报错（便于自检与排查）
+      (window.__auroraDeckErrors = window.__auroraDeckErrors || []).push({
+        at: Date.now(), deck: e.deck.index, code: e.errorCode, msg: e.error,
+        track: t.title || t.name, isActive, isCurrent
+      });
+      // 只有「当前正在播放的那一路 + 仍然是当前这首歌 + 不是切源导致的中断」
+      // 才算真正的播放失败。否则旧解码器被换源/停止时的报错会把用户刚点的歌顶掉。
+      if (!isActive || !isCurrent) return;
+      if (e.errorCode === 1) return;   // MEDIA_ERR_ABORTED：切换音源时的正常中断
+      // 播放中途出错（例如 seek 失败）不应该直接跳歌，那会把用户正在听的歌顶掉；
+      // 只有「一开始就播不出来」才自动跳过。
+      const pos = App.engine.position();
+      if (pos > 1.5) {
+        U.toast(`「${t.title || t.name}」播放出错（${e.error || '未知原因'}），已停在当前位置`, 'err', 4000);
+        return;
       }
+      U.toast(`无法播放：${t.title || t.name}`, 'err');
+      setTimeout(() => App.player.next(), 800);
     });
   }
 

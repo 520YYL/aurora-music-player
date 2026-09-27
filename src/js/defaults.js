@@ -11,7 +11,7 @@
   const EQ_FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 
   const DEFAULT_SETTINGS = {
-    version: 1,
+    version: 2,
     // 外观
     theme: 'glass',            // glass | flat | neumorph | skeuo | midnight | macaron
     accent: '#7c5cff',
@@ -42,7 +42,7 @@
       transitionMs: 1200,
       gaplessLead: 300,
       normalize: false,
-      rememberPosition: true,
+      rememberPosition: false,
       autoPlayNext: true,
       skipShortTracks: 0
     },

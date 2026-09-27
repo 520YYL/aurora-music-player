@@ -87,9 +87,10 @@ protocol.registerSchemesAsPrivileged([
 /**
  * 返回文件响应。
  * 使用「有界缓冲区 + 206 分段」而不是 Node 流：既避免 Electron 对 Web 流响应体的兼容问题，
- * 又保证拖动进度条时可以按需分块读取（单次最多 4MB，内存可控）。
+ * 又保证拖动进度条时可以按需分块读取。
+ * 上限放宽到 16MB：绝大多数歌曲一次就能完整返回，减少分段次数（FFmpeg 对分段更敏感）。
  */
-const MAX_CHUNK = 4 * 1024 * 1024;
+const MAX_CHUNK = 16 * 1024 * 1024;
 
 function fileResponse(filePath, req, extraHeaders = {}) {
   return (async () => {
@@ -98,7 +99,14 @@ function fileResponse(filePath, req, extraHeaders = {}) {
     if (stat.isDirectory()) return new Response('Is a directory', { status: 404 });
     const total = stat.size;
     const mime = scanner.mimeFor(filePath);
-    const headers = { 'Content-Type': mime, 'Accept-Ranges': 'bytes', ...extraHeaders };
+    // 界面资源（html/css/js）一律不缓存：否则升级后渲染进程可能仍执行旧代码
+    const isAppAsset = /^(text\/|application\/(javascript|json|wasm))/.test(mime);
+    const headers = {
+      'Content-Type': mime,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': isAppAsset ? 'no-store, no-cache, must-revalidate' : 'no-cache',
+      ...extraHeaders
+    };
     const rangeHeader = req.headers.get('range') || req.headers.get('Range');
     const isMedia = /^(audio|video)\//.test(mime);
 
@@ -112,8 +120,19 @@ function fileResponse(filePath, req, extraHeaders = {}) {
 
     if (rangeHeader && isMedia) {
       const m = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
-      let start = m && m[1] ? parseInt(m[1], 10) : 0;
-      let end = m && m[2] ? parseInt(m[2], 10) : total - 1;
+      let start;
+      let end;
+      if (m && m[1] === '' && m[2] !== '') {
+        // 后缀范围 "bytes=-N"：请求最后 N 个字节。
+        // MP3/FLAC 解码器在 seek 时会读文件尾部的标签，必须正确支持，
+        // 否则会出现 FFmpegDemuxer: demuxer seek failed，导致进度条跳转失败。
+        const n = parseInt(m[2], 10);
+        start = Math.max(0, total - (Number.isFinite(n) ? n : 0));
+        end = total - 1;
+      } else {
+        start = m && m[1] ? parseInt(m[1], 10) : 0;
+        end = m && m[2] ? parseInt(m[2], 10) : total - 1;
+      }
       if (!Number.isFinite(start) || start < 0) start = 0;
       if (!Number.isFinite(end) || end >= total) end = total - 1;
       if (start > end || start >= total) {
@@ -226,6 +245,15 @@ function initStores() {
     }
     if (guess.length) settingsStore.set('library.roots', guess);
   }
+  // 设置迁移：v1 的 rememberPosition 默认为 true，但该功能当时并未真正接上，
+  // 现在功能生效后必须默认关闭，否则老用户更新后会突然「跳到上次听到的位置」。
+  const settingsVer = settingsStore.get('version', 1);
+  if (settingsVer < 2) {
+    settingsStore.set('version', 2);
+    settingsStore.set('playback.rememberPosition', false);
+    trace('settings migration: version 1 -> 2, rememberPosition=false');
+  }
+
   // 元数据解析规则升级（例如修正了标题/歌手顺序）后，丢弃旧缓存并自动重建一次曲库，
   // 否则用户会一直看到旧缓存里的错误结果。
   const metaVer = settingsStore.get('library.metaVersion', 1);
@@ -1293,9 +1321,16 @@ function ensureTray() {
 /* ------------------------------------------------------------------ */
 function runSmokeTest() {
   const wc = mainWindow.webContents;
-  const evalJs = async (code) => {
-    try { return await wc.executeJavaScript(code, true); }
-    catch (err) { smoke.errors.push('eval: ' + String(err && err.message ? err.message : err)); return null; }
+  const evalJs = async (code, timeoutMs = 70000) => {
+    try {
+      return await Promise.race([
+        wc.executeJavaScript(code, true),
+        new Promise((resolve) => setTimeout(() => {
+          smoke.errors.push(`eval 超时（${timeoutMs}ms）: ${String(code).slice(0, 60)}…`);
+          resolve(null);
+        }, timeoutMs))
+      ]);
+    } catch (err) { smoke.errors.push('eval: ' + String(err && err.message ? err.message : err)); return null; }
   };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1514,6 +1549,107 @@ function runSmokeTest() {
         }, 700);
       }))()`);
       if (smoke.eqLayout && !smoke.eqLayout.ok) smoke.errors.push('均衡器竖直滑块渲染异常: ' + JSON.stringify(smoke.eqLayout));
+
+      // 音频分段请求与跳转（回归测试：不支持后缀范围 bytes=-N 会导致 seek 失败、
+      // 进而触发错误处理自动切歌）
+      smokePhase('range');
+      smoke.range = await evalJs(`(async () => {
+        const A = window.App;
+        const t = A.state.tracks[0];
+        if (!t) return { skipped: true };
+        const url = window.aurora.app.mediaUrl(t.path);
+        const out = {};
+        const r1 = await fetch(url, { headers: { Range: 'bytes=100-599' } });
+        const b1 = await r1.arrayBuffer();
+        out.normal = { status: r1.status, len: b1.byteLength, cr: r1.headers.get('content-range') };
+        const r2 = await fetch(url, { headers: { Range: 'bytes=-500' } });
+        const b2 = await r2.arrayBuffer();
+        out.suffix = { status: r2.status, len: b2.byteLength, cr: r2.headers.get('content-range') };
+        const r3 = await fetch(url, { headers: { Range: 'bytes=0-' } });
+        out.open = { status: r3.status, cr: r3.headers.get('content-range') };
+        // 真实解码器 seek 验证
+        window.__auroraDeckErrors = [];
+        A.player.setQueue(A.state.tracks, 0);
+        await new Promise(r => setTimeout(r, 1600));
+        const dur = A.engine.duration();
+        const errsBefore = (window.__auroraDeckErrors || []).length;
+        if (dur > 20) A.player.seek(dur - 8);
+        await new Promise(r => setTimeout(r, 2600));
+        out.seek = {
+          duration: Number((dur || 0).toFixed(1)),
+          position: Number(A.engine.position().toFixed(1)),
+          newErrors: (window.__auroraDeckErrors || []).length - errsBefore,
+          currentTitle: A.player.current ? A.player.current.title : null,
+          errorDetail: (window.__auroraDeckErrors || []).slice(-3)
+        };
+        out.ok = r1.status === 206 && b1.byteLength === 500
+          && r2.status === 206 && b2.byteLength === 500
+          && Math.abs(out.seek.position - (out.seek.duration - 8)) < 15;
+        return out;
+      })()`);
+      if (smoke.range && !smoke.range.ok) {
+        smoke.errors.push('音频分段请求/跳转异常: ' + JSON.stringify(smoke.range));
+      }
+
+      // 切歌竞态（回归测试：在歌曲将要放完时点另一首，会被自动下一首顶掉）
+      smokePhase('switch-race');
+      smoke.switchRace = await evalJs(`(async () => {
+        const A = window.App;
+        if (A.state.tracks.length < 3) return { skipped: true };
+        A.player.setMode('repeat-all');
+        A.player.setQueue(A.state.tracks, 0);
+        await new Promise(r => setTimeout(r, 2500));
+        const target = A.state.tracks[2];
+        const dur = A.engine.duration();
+        if (dur > 3) A.player.seek(dur - 1.2);   // 让当前歌马上播完
+        await new Promise(r => setTimeout(r, 150));
+        await A.playTrack(target);                // 此刻点击另一首
+        await new Promise(r => setTimeout(r, 3500));
+        const cur = A.player.current;
+        return {
+          targetTitle: target.title,
+          currentTitle: cur ? cur.title : null,
+          isTarget: !!cur && cur.id === target.id,
+          position: Number(A.engine.position().toFixed(2)),
+          duration: Number(A.engine.duration().toFixed(2)),
+          playing: !!A.player.playing,
+          deckErrors: (window.__auroraDeckErrors || []).slice(-6)
+        };
+      })()`);
+      if (smoke.switchRace && !smoke.switchRace.skipped) {
+        if (!smoke.switchRace.isTarget) {
+          smoke.errors.push(`切歌竞态：点击的歌被自动下一首顶掉（当前="${smoke.switchRace.currentTitle}"，应为="${smoke.switchRace.targetTitle}"）`);
+        }
+        if (smoke.switchRace.position > 6) {
+          smoke.errors.push(`切歌后进度条跳到了靠后位置：${smoke.switchRace.position}s`);
+        }
+      }
+
+      // 导入的歌词能否正确读取与解析
+      smokePhase('imported-lyrics');
+      smoke.importedLyrics = await evalJs(`(async () => {
+        const A = window.App;
+        const t = A.state.tracks.find(x => /琴师/.test(x.title || '') || /琴师/.test(x.name || ''));
+        if (!t) return { skipped: true, reason: '曲库里没有找到琴师' };
+        const list = await window.aurora.lyrics.list();
+        await A.lyrics.loadFor(t);
+        const lines = A.lyrics.lines;
+        return {
+          trackTitle: t.title,
+          source: A.lyrics.sourcePath,
+          lines: lines.length,
+          first3: lines.slice(0, 3).map(l => l.text),
+          lastLine: lines.length ? lines[lines.length - 1].text : null,
+          cachedFiles: list.map(f => f.name),
+          cjkLines: lines.filter(l => l.isCJK).length,
+          timedOk: lines.every((l, i, a) => i === 0 || l.t >= a[i - 1].t),
+          hasTranslation: lines.some(l => l.tr)
+        };
+      })()`);
+      if (smoke.importedLyrics && !smoke.importedLyrics.skipped) {
+        if (smoke.importedLyrics.lines < 5) smoke.errors.push(`导入的歌词没有正确解析（只有 ${smoke.importedLyrics.lines} 行）`);
+        if (!smoke.importedLyrics.timedOk) smoke.errors.push('歌词时间轴顺序异常');
+      }
 
       // 统计写入检查
       smokePhase('stats');

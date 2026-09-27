@@ -20,6 +20,7 @@
       this.degraded = false;
       this.decks = [];
       this.active = 0;
+      this.currentTrackId = null;   // 由 Player 同步，用于过滤过期的 ended 事件
       this.plugins = [];
       this.onEnded = opts.onEnded || (() => {});
       this.onTimeUpdate = opts.onTimeUpdate || (() => {});
@@ -149,14 +150,22 @@
     _bindDeck(deck) {
       const el = deck.el;
       el.addEventListener('ended', () => {
-        if (this.decks[this.active] === deck) this.onEnded(deck);
+        // 双重判定：只有「这一路解码器仍是当前解码器」且「它上面那首歌仍是当前歌曲」
+        // 时才触发自动下一首。否则在切歌竞态里，刚淡出的旧解码器播完会误触发自动切歌。
+        const isActive = this.decks[this.active] === deck;
+        const isCurrent = !!(deck.track && this.currentTrackId && deck.track.id === this.currentTrackId);
+        if (isActive && isCurrent) this.onEnded(deck);
         this.onDeckEvent({ type: 'ended', deck });
       });
       el.addEventListener('timeupdate', () => {
         if (this.decks[this.active] === deck) this.onTimeUpdate(this.position(), this.duration());
       });
       el.addEventListener('loadedmetadata', () => this.onDeckEvent({ type: 'loadedmetadata', deck }));
-      el.addEventListener('error', () => this.onDeckEvent({ type: 'error', deck, error: el.error && el.error.message }));
+      el.addEventListener('error', () => this.onDeckEvent({
+        type: 'error', deck,
+        error: el.error ? el.error.message : null,
+        errorCode: el.error ? el.error.code : null
+      }));
       el.addEventListener('playing', () => { if (this.decks[this.active] === deck) this.onDeckEvent({ type: 'playing', deck }); });
       el.addEventListener('waiting', () => this.onDeckEvent({ type: 'waiting', deck }));
       el.addEventListener('pause', () => this.onDeckEvent({ type: 'pause', deck }));

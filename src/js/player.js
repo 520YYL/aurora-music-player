@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Aurora 极光音乐 —— 播放控制器
  * 播放列表 / 播放模式 / 切歌过渡 / 听歌时长累计 / 系统媒体控制
  */
@@ -6,6 +6,18 @@
   'use strict';
 
   const U = window.U;
+
+  /**
+   * 给 play() 加超时。
+   * 媒体资源出错时 audio.play() 返回的 Promise 可能永远 pending，
+   * 直接 await 会让整次切歌卡死（不报错、不播放、界面卡在旧歌上）。
+   */
+  function playWithTimeout(promise, ms = 5000) {
+    return Promise.race([
+      promise,
+      new Promise((resolve) => setTimeout(() => resolve(false), ms))
+    ]);
+  }
 
   class Player {
     constructor(engine) {
@@ -51,7 +63,7 @@
     }
 
     _bindEngine() {
-      this.engine.onEnded = () => this.onTrackEnded();
+      this.engine.onEnded = (deck) => this.onTrackEnded(deck);
       this.engine.onTimeUpdate = () => this.emit('time', { position: this.engine.position(), duration: this.engine.duration() });
       this.engine.onDeckEvent = (e) => this.emit('deck', e);
     }
@@ -119,6 +131,7 @@
       this.flushStats({ reason: 'switch' });
       const prev = this.current;
       this.current = track;
+      this.engine.currentTrackId = track.id;
       this.index = this.currentIndex;
       this._sessionMs = 0;
       this._countedPlay = false;
@@ -126,7 +139,9 @@
       const P = (this.settings && this.settings.playback) || {};
       const transition = opts.transition || (prev ? (P.transition || 'crossfade') : 'none');
       const ms = opts.transitionMs || P.transitionMs || 1200;
-      const startAt = opts.startAt || 0;
+      // 记住播放位置：只有用户显式开启时才续播，且过短/接近结尾的位置会被忽略
+      const startAt = typeof opts.startAt === 'number' ? opts.startAt
+        : (P.rememberPosition ? this.getResumePosition(track) : 0);
 
       await this.engine.ensure();
       if (token !== this._loadToken) return;
@@ -135,13 +150,13 @@
         this.engine.setSource(track, 0);
         this.engine.active = 0;
         this.engine.seek(startAt, 0);
-        await this.engine.play(0);
+        await playWithTimeout(this.engine.play(0), 6000);
       } else if (!prev || transition === 'none' || transition === 'gapless') {
         const idx = this.engine.active;
         this.engine.setSource(track, idx);
         this.engine.seek(startAt, idx);
         this.engine.setDeckGain(idx, 1, 0);
-        await this.engine.play(idx);
+        await playWithTimeout(this.engine.play(idx), 6000);
       } else {
         await this._transition(track, prev, transition, ms, startAt);
       }
@@ -154,6 +169,11 @@
       this.emit('state', this.state());
       if (this.settings && this.settings.playback && this.settings.playback.rememberPosition) {
         this._savePosition(track, startAt);
+      }
+      if (startAt > 1) {
+        try {
+          if (window.U && window.U.toast) window.U.toast(`已从 ${window.U.fmtTime(startAt)} 继续播放`, 'ok', 2200);
+        } catch { /* ignore */ }
       }
     }
 
@@ -168,11 +188,16 @@
       eng.setSource(track, toIdx);
       eng.seek(startAt, toIdx);
       eng.setDeckGain(toIdx, 0, 0);
-      const ok = await eng.play(toIdx);
+      // 立刻把「当前解码器」切到新的一路：否则在 await play() 期间，旧解码器播完
+      // 会触发 ended，而它此刻仍被当作当前解码器，于是又自动跳到下一首，
+      // 把用户刚点的歌顶掉（表现为「进度条跳到最后 + 自动切歌」）。
+      eng.active = toIdx;
+      const ok = await playWithTimeout(eng.play(toIdx), 6000);
       if (!ok) {
+        eng.active = fromIdx;
         eng.setSource(track, fromIdx);
         eng.setDeckGain(fromIdx, 1, 0);
-        await eng.play(fromIdx);
+        await playWithTimeout(eng.play(fromIdx), 6000);
         return;
       }
       const outMs = Math.round(ms * preset.out);
@@ -184,7 +209,6 @@
       } else {
         eng.setDeckGain(toIdx, 1, inMs);
       }
-      eng.active = toIdx;
       setTimeout(() => {
         // 只有当这个解码器已经不是当前播放的那个时才收尾，否则会误停正在放的那一路
         if (gen !== this._transitionGen || eng.active === fromIdx) return;
@@ -218,11 +242,14 @@
       return null;
     }
 
-    async onTrackEnded() {
+    async onTrackEnded(deck) {
+      // 最后一道防线：只有「结束的那一路解码器上仍然是当前这首歌」时才自动切歌。
+      // 用户在歌曲快结束时点了别的歌，旧解码器随后播完，绝不能把新点的歌顶掉。
+      if (deck && deck.track && this.current && deck.track.id !== this.current.id) return;
       const P = (this.settings && this.settings.playback) || {};
       if (this.mode === 'repeat-one') {
         this.engine.seek(0);
-        await this.engine.play();
+        await playWithTimeout(this.engine.play(), 6000);
         this._sessionMs = 0; this._countedPlay = false;
         this.emit('track', { track: this.current, repeated: true });
         return;
@@ -271,7 +298,7 @@
     async resume() {
       await this.engine.ensure();
       this.engine.resume();
-      const ok = await this.engine.play();
+      const ok = await playWithTimeout(this.engine.play(), 6000);
       if (ok) { this.playing = true; this._lastTick = performance.now(); this.emit('state', this.state()); }
     }
 
@@ -286,6 +313,8 @@
       this.engine.pauseAll();
       this.playing = false;
       this.current = null;
+      this.engine.currentTrackId = null;
+      this._loadToken++;
       this.flushStats({ reason: 'stop' });
       this.emit('state', this.state());
     }
@@ -352,10 +381,18 @@
     getResumePosition(track) {
       const positions = (this.settings && this.settings._positions) || {};
       const rec = positions[track.id];
-      if (!rec) return 0;
+      if (!rec || !Number.isFinite(rec.pos)) return 0;
+      // 超过 7 天的记录不再使用
       if (Date.now() - rec.at > 1000 * 60 * 60 * 24 * 7) return 0;
-      if (!track.duration || rec.pos > track.duration * 1000 - 8000) return 0;
-      return rec.pos > 10 ? rec.pos : 0;
+      // 歌曲太短（<60 秒）不续播
+      const durMs = track.duration || 0;          // 注意：duration 单位是毫秒，pos 单位是秒
+      if (!durMs || durMs < 60000) return 0;
+      const durSec = durMs / 1000;
+      // 只续播 30 秒之后、且距离结尾还有 20 秒以上的位置，
+      // 否则一开播就快进到结尾，会被误认为「自动切歌」
+      if (rec.pos < 30) return 0;
+      if (durSec - rec.pos < 20) return 0;
+      return rec.pos;
     }
 
     flushStats(opts = {}) {
