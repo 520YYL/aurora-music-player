@@ -256,6 +256,21 @@ function initStores() {
     trace('settings migration: removed legacy desktop-lyrics config');
   }
 
+  // 全局快捷键若为空字符串会直接被跳过（等于没有全局快捷键，在桌面上按键毫无反应）。
+  // 这里把空值补回默认值，保证「媒体键 + Ctrl+Alt+A」始终可用。
+  {
+    const defGlobal = DEFAULTS.DEFAULT_SETTINGS.shortcuts.global || {};
+    const cur = settingsStore.get('shortcuts.global', {}) || {};
+    let filled = 0;
+    for (const [action, defAccel] of Object.entries(defGlobal)) {
+      if (!cur[action] || String(cur[action]).trim() === '') { cur[action] = defAccel; filled++; }
+    }
+    if (filled) {
+      settingsStore.set('shortcuts.global', cur);
+      trace(`settings migration: restored ${filled} empty global shortcut(s)`);
+    }
+  }
+
   // 设置迁移：v1 的 rememberPosition 默认为 true，但该功能当时并未真正接上，
   // 现在功能生效后必须默认关闭，否则老用户更新后会突然「跳到上次听到的位置」。
   const settingsVer = settingsStore.get('version', 1);
@@ -664,15 +679,19 @@ function registerGlobalShortcuts() {
   if (!S || S.globalEnabled === false) return { registered: [], failed: [] };
   const registered = [];
   const failed = [];
-  for (const [action, accel] of Object.entries(S.global || {})) {
-    if (!accel || !GLOBAL_ACTIONS[action]) continue;
-    const e = toElectronAccel(accel);
-    if (!e) continue;
-    try {
-      const ok = globalShortcut.register(e, () => handleGlobalAction(action));
-      if (ok) registered.push({ action, accel: e });
-      else failed.push({ action, accel: e });
-    } catch { failed.push({ action, accel: e }); }
+  for (const [action, accelSpec] of Object.entries(S.global || {})) {
+    if (!accelSpec || !GLOBAL_ACTIONS[action]) continue;
+    // 一个动作可以绑定多个全局键，用 | 分隔（例如 "MediaPlayPause|F5"），
+    // 这样可以把 F5 之类的自定义键加成全局键而不用丢掉媒体键。
+    for (const piece of String(accelSpec).split('|')) {
+      const e = toElectronAccel(piece.trim());
+      if (!e) continue;
+      try {
+        const ok = globalShortcut.register(e, () => handleGlobalAction(action));
+        if (ok) registered.push({ action, accel: e });
+        else failed.push({ action, accel: e });
+      } catch { failed.push({ action, accel: e }); }
+    }
   }
   return { registered, failed };
 }
@@ -1750,6 +1769,23 @@ function runSmokeTest() {
         if (smoke.importedLyrics.firstLineIsCredit) smoke.errors.push('歌词开头仍显示「作词/作曲/版权」等制作信息: ' + smoke.importedLyrics.first3[0]);
         if (!smoke.importedLyrics.creditsSkipped) smoke.errors.push('没有过滤掉开头的制作信息行');
       }
+
+      // 全局快捷键：必须真的注册成功（用户反馈在桌面上按键没反应，根因是设置里是空值）
+      smokePhase('global-shortcuts');
+      try {
+        const reg = registerGlobalShortcuts();
+        smoke.globalShortcuts = {
+          registered: (reg.registered || []).map((r) => `${r.action}=${r.accel}`),
+          failed: (reg.failed || []).map((r) => `${r.action}=${r.accel}`),
+          settingsGlobal: settingsStore.get('shortcuts.global', {})
+        };
+        if (!smoke.globalShortcuts.registered.length) {
+          smoke.errors.push('全局快捷键一个都没注册成功: ' + JSON.stringify(smoke.globalShortcuts.settingsGlobal));
+        }
+        if (smoke.globalShortcuts.failed.length) {
+          smoke.errors.push('部分全局快捷键注册失败（可能被其他软件占用）: ' + JSON.stringify(smoke.globalShortcuts.failed));
+        }
+      } catch (e) { smoke.errors.push('globalShortcuts: ' + e.message); }
 
       // 统计写入检查
       smokePhase('stats');
