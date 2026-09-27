@@ -187,13 +187,32 @@ canvas.chart { width: 100%; height: 172px; display: block; }
 
 /* ---------------------------- 均衡器 ---------------------------- */
 .eq-panel { padding: 18px; }
-.eq-bands { display: flex; justify-content: space-between; gap: 6px; margin: 22px 0 10px; }
-.eq-band { display: flex; flex-direction: column; align-items: center; gap: 8px; flex: 1; }
-.eq-band .db { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; width: 34px; text-align: center; }
-.eq-slider { appearance: none; -webkit-appearance: none; writing-mode: vertical-lr; direction: rtl; width: 26px; height: 168px; }
-.eq-slider::-webkit-slider-runnable-track { width: 6px; height: 100%; border-radius: 999px; background: linear-gradient(0deg, var(--accent) var(--fill, 50%), color-mix(in srgb, var(--text) 18%, transparent) var(--fill, 50%)); }
-.eq-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); box-shadow: 0 2px 6px rgba(0, 0, 0, .35); margin-left: -4.5px; }
-.eq-band .hz { font-size: 11px; color: var(--muted); }
+.eq-bands { display: flex; justify-content: space-between; gap: 4px; margin: 14px 0 4px; }
+.eq-band { display: flex; flex-direction: column; align-items: center; gap: 7px; flex: 1; min-width: 0; }
+.eq-band .db { font-size: 12px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; text-align: center; }
+/* 竖直滑块：用「横向滑块 + rotate(-90deg)」实现。Chromium 对 writing-mode 竖排
+   range 的伪元素轨道尺寸支持不可靠，会导致轨道塌陷成 0 高度（只剩一个圆点）。 */
+.eq-band .slider-box { position: relative; width: 34px; height: 240px; flex: none; }
+.eq-band .slider-box input[type="range"].eq-slider {
+  position: absolute; left: 50%; top: 50%;
+  width: 240px; height: 20px; margin: 0; padding: 0; border: none;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  transform-origin: center center;
+}
+.eq-band .eq-slider::-webkit-slider-runnable-track {
+  height: 8px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent) var(--fill, 50%), color-mix(in srgb, var(--text) 18%, transparent) var(--fill, 50%));
+}
+.eq-band .eq-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 18px; height: 18px; border-radius: 50%; margin-top: -5px;
+  background: #fff; border: 2px solid var(--accent);
+  box-shadow: 0 2px 7px rgba(0, 0, 0, .4);
+}
+.eq-band .eq-slider:hover::-webkit-slider-thumb { transform: scale(1.12); }
+.eq-band .hz { font-size: 11.5px; color: var(--muted); letter-spacing: .3px; }
+.eq-band .hz.zero { color: var(--accent); font-weight: 700; }
+.eq-scale { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); margin-top: 2px; }
 .preset-list { display: flex; flex-wrap: wrap; gap: 7px; }
 
 /* ---------------------------- 插件 ---------------------------- */

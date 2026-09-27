@@ -216,15 +216,40 @@
     ]));
 
     const bandsWrap = ce('div', { class: 'eq-bands' });
+    const EQ_MIN = -12;
+    const EQ_MAX = 12;
+    const paintFill = (inp) => {
+      const pct = ((Number(inp.value) - EQ_MIN) / (EQ_MAX - EQ_MIN)) * 100;
+      inp.style.setProperty('--fill', `${pct}%`);
+    };
     D.EQ_FREQS.forEach((f, i) => {
       const b = ce('div', { class: 'eq-band' });
       const db = ce('div', { class: 'db', text: `${(eqs.bands[i] || 0).toFixed(1)}` });
-      const inp = ce('input', { type: 'range', class: 'eq-slider', min: -12, max: 12, step: 0.5, value: eqs.bands[i] || 0, orient: 'vertical' });
-      inp.oninput = () => { db.textContent = Number(inp.value).toFixed(1); app.setEqBand(i, Number(inp.value)); };
-      b.appendChild(db); b.appendChild(inp);
-      b.appendChild(ce('div', { class: 'hz', text: f >= 1000 ? `${f / 1000}k` : String(f) }));
+      const inp = ce('input', {
+        type: 'range', class: 'eq-slider', min: EQ_MIN, max: EQ_MAX, step: 0.5,
+        value: eqs.bands[i] || 0, title: `${f} Hz`
+      });
+      paintFill(inp);
+      inp.oninput = () => {
+        db.textContent = Number(inp.value).toFixed(1);
+        paintFill(inp);
+        app.setEqBand(i, Number(inp.value));
+      };
+      // 双击归零
+      inp.ondblclick = () => {
+        inp.value = '0'; db.textContent = '0.0'; paintFill(inp); app.setEqBand(i, 0);
+      };
+      const box = ce('div', { class: 'slider-box' }, [inp]);
+      b.appendChild(db);
+      b.appendChild(box);
+      b.appendChild(ce('div', { class: `hz${f === 1000 ? ' zero' : ''}`, text: f >= 1000 ? `${f / 1000}k` : String(f) }));
       bandsWrap.appendChild(b);
     });
+    panel.appendChild(ce('div', { class: 'row', style: { justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--muted)', marginTop: '10px' } }, [
+      ce('span', { text: '＋12 dB' }),
+      ce('span', { text: '拖动滑块调节 · 双击归零' }),
+      ce('span', { text: '－12 dB' })
+    ]));
     panel.appendChild(bandsWrap);
 
     panel.appendChild(ce('div', { class: 'divider' }));

@@ -162,6 +162,9 @@
       const preset = (window.AURORA_TRANSITIONS || {})[transition] || { out: 1, gap: 0, in: 1 };
       const fromIdx = eng.active;
       const toIdx = 1 - fromIdx;
+      // 过渡序号：连点下一首时，旧的收尾定时器必须作废，否则会把「此时正在播放」
+      // 的那个解码器静音掉，表现为音乐突然停死。
+      const gen = (this._transitionGen = (this._transitionGen || 0) + 1);
       eng.setSource(track, toIdx);
       eng.seek(startAt, toIdx);
       eng.setDeckGain(toIdx, 0, 0);
@@ -176,10 +179,15 @@
       const inMs = Math.round(ms * preset.in);
       const gapMs = Math.round(ms * preset.gap);
       eng.setDeckGain(fromIdx, 0, outMs);
-      if (gapMs > 0) setTimeout(() => eng.setDeckGain(toIdx, 1, inMs), outMs + gapMs);
-      else eng.setDeckGain(toIdx, 1, inMs);
+      if (gapMs > 0) {
+        setTimeout(() => { if (gen === this._transitionGen) eng.setDeckGain(toIdx, 1, inMs); }, outMs + gapMs);
+      } else {
+        eng.setDeckGain(toIdx, 1, inMs);
+      }
       eng.active = toIdx;
       setTimeout(() => {
+        // 只有当这个解码器已经不是当前播放的那个时才收尾，否则会误停正在放的那一路
+        if (gen !== this._transitionGen || eng.active === fromIdx) return;
         try { eng.pause(fromIdx); eng.setDeckGain(fromIdx, 0, 0); } catch { /* ignore */ }
       }, outMs + gapMs + inMs + 100);
     }

@@ -1402,8 +1402,7 @@ function runSmokeTest() {
 
       // 过渡、模式、主题、插件、EQ 冒烟
       smokePhase('features');
-      smoke.features = await evalJs(`(async () => {
-        const A = window.App;
+      smoke.features = await evalJs(`(async () => {        const A = window.App;
         const out = { themes: [], transitions: [], errors: [] };
         for (const th of (window.AURORA_DEFAULTS.THEMES || [])) {
           try { await A.saveSettings({ theme: th.id }, { rerender: true }); out.themes.push(th.id + ':ok'); }
@@ -1414,6 +1413,9 @@ function runSmokeTest() {
           try { await A.player.next({ transition: tr }); await new Promise(r => setTimeout(r, 900)); out.transitions.push(tr + ':pos=' + A.engine.position().toFixed(1)); }
           catch (e) { out.transitions.push(tr + ':ERR ' + e.message); }
         }
+        // 连续快速切歌（含长过渡）之后必须还在播放，否则就是把正在播的那一路误静音了
+        out.stillPlaying = !!(A.player.playing && !A.engine.isPaused());
+        out.activeDeckGain = Number(A.engine.getDeckGain(A.engine.active).toFixed(2));
         try { A.player.setMode('shuffle'); A.player.setMode('repeat-one'); A.player.setMode('repeat-all'); A.player.setMode('sequential'); out.modes = 'ok'; } catch (e) { out.modes = 'ERR ' + e.message; }
         try { A.setEq({ enabled: true, bands: [6,4,2,0,-2,0,2,4,5,6], preamp: 2 }); out.eq = 'ok'; } catch (e) { out.eq = 'ERR ' + e.message; }
         try { A.setRate(1.25); A.setPitch(3); out.ratePitch = A.engine.rate + '/' + A.engine.pitchSemis; A.setRate(1); A.setPitch(0); } catch (e) { out.ratePitch = 'ERR ' + e.message; }
@@ -1426,6 +1428,9 @@ function runSmokeTest() {
         out.runtimeErrors = window.__auroraErrors || [];
         return out;
       })()`);
+      if (smoke.features && smoke.features.stillPlaying === false) {
+        smoke.errors.push(`连续切歌后播放停止（可能是过渡收尾把正在播放的解码器静音了）：activeDeckGain=${smoke.features.activeDeckGain}`);
+      }
 
       // 侧栏导航与按钮接线（回归测试：早期版本这里忘了绑定点击事件）
       smokePhase('sidebar');
@@ -1487,6 +1492,28 @@ function runSmokeTest() {
         if (!smoke.cumulative.advanced) smoke.errors.push('累计听歌时长没有随时间增长');
         if (!smoke.cumulative.chipChanged) smoke.errors.push('正在播放页的「累计」标签没有实时刷新（' + smoke.cumulative.chipBefore + ' -> ' + smoke.cumulative.chipAfter + '）');
       }
+
+      // 均衡器滑块尺寸（回归测试：竖直滑块曾经因为 writing-mode 方案而塌陷成 0 高度）
+      smokePhase('eq-layout');
+      smoke.eqLayout = await evalJs(`(() => new Promise(res => {
+        const A = window.App;
+        A.setView('eq');
+        setTimeout(() => {
+          const all = document.querySelectorAll('.eq-band input.eq-slider');
+          const inp = all[0];
+          if (!inp) return res({ found: false, ok: false });
+          const r = inp.getBoundingClientRect();
+          const box = inp.closest('.slider-box');
+          const br = box ? box.getBoundingClientRect() : null;
+          res({
+            found: true, count: all.length,
+            rectW: Math.round(r.width), rectH: Math.round(r.height),
+            boxH: br ? Math.round(br.height) : 0,
+            ok: all.length === 10 && r.height >= 180
+          });
+        }, 700);
+      }))()`);
+      if (smoke.eqLayout && !smoke.eqLayout.ok) smoke.errors.push('均衡器竖直滑块渲染异常: ' + JSON.stringify(smoke.eqLayout));
 
       // 统计写入检查
       smokePhase('stats');
