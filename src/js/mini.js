@@ -50,7 +50,7 @@
     const cover = $('#cover');
     if (p.hasCover && p.coverId) {
       cover.textContent = '';
-      cover.style.backgroundImage = `url("aurora://local/cover?id=${p.coverId}")`;
+      cover.style.backgroundImage = `url("${window.U.coverUrlOf(p.coverId)}")`;
       cover.style.backgroundSize = 'cover';
     } else {
       cover.style.backgroundImage = '';

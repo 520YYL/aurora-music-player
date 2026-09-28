@@ -79,8 +79,21 @@ contextBridge.exposeInMainWorld('aurora', {
     import: (id) => invoke('lyrics:import', id),
     saveFor: (name, base64) => invoke('lyrics:saveFor', name, base64),
     list: () => invoke('lyrics:list'),
-    // 浮层窗口已移除，此通道仅用于迷你播放器开窗后主动索要一次同步
+    // 桌面歌词浮层
+    toggleDesktop: (force) => invoke('lyricsWin:toggle', force),
+    update: (patch) => invoke('lyricsWin:update', patch),
+    setAlwaysOnTop: (on) => invoke('lyricsWin:setAlwaysOnTop', on),
+    resetPos: () => invoke('lyricsWin:resetPos'),
+    sync: (payload) => invoke('lyricsWin:sync', payload),
+    getBounds: () => invoke('lyricsWin:getBounds'),
+    // 浮层 / 迷你窗口开窗后主动索要一次同步
     requestSync: () => invoke('overlay:requestSync')
+  },
+  cover: {
+    pickFor: (id) => invoke('cover:pickFor', id)
+  },
+  debug: {
+    windows: () => invoke('debug:windows')
   },
   mini: {
     toggle: (force) => invoke('mini:toggle', force),

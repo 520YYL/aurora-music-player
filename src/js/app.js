@@ -69,6 +69,10 @@
     updateCounts();
     updateNowPlayingUi();
 
+    // 把上次退出时听的那首歌装回播放器，这样重开就能直接点播放接着听
+    await App.restoreLastPlayback();
+    App._lastPlaybackTimer = setInterval(saveLastPlayback, 4000);
+
     if (!App.state.tracks.length) {
       setTimeout(() => { if (!App.state.tracks.length) startScan(); }, 600);
     }
@@ -96,13 +100,15 @@
     App.player.on('track', ({ track }) => {
       updateNowPlayingUi();
       loadLyricsFor(track);
+      syncOverlays(true);   // 切歌立刻把新歌词推到桌面歌词窗，别等下一次 250ms 轮询
+      saveLastPlayback();   // 切歌立刻记下来，避免退出时来不及写
       if (App.state.view === 'library') markPlayingRow();
       // 正在播放页是整页快照：切歌时必须重绘，否则封面/标题/累计会一直停在上一首
       if (App.state.view === 'now') App.render();
       syncOverlays();
     });
     App.player.on('state', () => { updatePlayButton(); syncOverlays(); });
-    App.player.on('time', () => { updateProgress(); });
+    App.player.on('time', () => { lastPos.id = App.player.current ? App.player.current.id : null; lastPos.pos = App.engine.position(); updateProgress(); });
     App.player.on('mode', () => { updateModeButton(); syncOverlays(); });
     App.player.on('deck', (e) => {
       if (e.type !== 'error' || !e.deck) return;
@@ -193,6 +199,86 @@
   }
   App.saveSettings = saveSettings;
 
+  /* ================================ 上次播放 ================================ */
+  /**
+   * 记住「上次在听哪首、听到哪」。
+   * 存到 settings._lastPlayback；下划线开头，设置页不展示。
+   * 与 playback.rememberPosition 互不影响：那个是「续播到上次位置」的可选项，
+   * 这个只负责把歌装回播放器，让重开软件后直接点播放就能接着听。
+   *
+   * 触发点：切歌（player 的 track 事件）、每 4 秒定时、以及退出前。
+   * 注意「只加载不播放」的恢复路径不会触发 track 事件，所以恢复完成后要手动存一次。
+   */
+  const lastPos = { id: null, pos: 0 };
+
+  function saveLastPlayback() {
+    if (App._quitting) return;
+    const t = App.player.current;
+    if (!t || !t.id) return;
+    // 用节流缓存的位置：它由播放器的 time 事件持续更新，比直接读引擎更可靠
+    const pos = lastPos.id === t.id ? lastPos.pos : App.engine.position();
+    // 太靠前或已经放完的位置没意义，记 0 就行
+    const dur = App.engine.duration();
+    const keep = Number.isFinite(pos) && pos > 1 && (!dur || pos < dur - 3) ? Math.round(pos * 10) / 10 : 0;
+    const next = { id: t.id, position: keep, at: Date.now() };
+    const prev = App.settings._lastPlayback;
+    // 同一首歌、位置差不到 2 秒就不重复写盘
+    if (prev && prev.id === next.id && Math.abs((prev.position || 0) - keep) < 2) return;
+    App.settings._lastPlayback = next;
+    api.settings.set('_lastPlayback', next);
+  }
+
+  /**
+   * 启动时把上次那首歌装回播放器。
+   * 只加载不自动播放：Electron 在「用户没交互过」时 play() 可能被拦，
+   * 静默失败反而让人以为坏了；留一首已就绪的歌，点一下播放即可。
+   */
+  App.restoreLastPlayback = async function () {
+    const last = App.settings._lastPlayback;
+    if (!last || !last.id) return null;
+    const track = App.state.tracks.find((t) => t.id === last.id);
+    if (!track) {
+      // 歌已经从曲库里没了（删了文件/移除了目录）：清掉记录，免得每次启动都白找
+      App.settings._lastPlayback = null;
+      api.settings.set('_lastPlayback', null);
+      return null;
+    }
+    const list = App.visibleTracks();
+    const inList = list.some((t) => t.id === track.id);
+    const queue = inList ? list : App.state.tracks.slice();
+    const idx = Math.max(0, queue.findIndex((t) => t.id === track.id));
+
+    // 用 autoplay:false 装队列 —— 这不会触发 player 的 track 事件，
+    // 所以下面必须自己把引擎、界面、记录都对齐，否则界面显示「未播放」而队列却指向这首歌。
+    App.player.setQueue(queue, idx, { autoplay: false });
+    await App.engine.ensure();
+    App.engine.setSource(track, App.engine.active);
+    App.player.current = track;
+    App.engine.currentTrackId = track.id;
+    App.player.index = idx;
+
+    const pos = Number(last.position) || 0;
+    if (pos > 1) App.engine.seek(pos, App.engine.active);
+    lastPos.id = track.id;
+    lastPos.pos = pos > 1 ? pos : 0;
+
+    // 元数据到位后再对齐一次位置（刚 setSource 时 duration 还是 0，seek 可能被丢掉）
+    if (pos > 1) {
+      const seekWhenReady = (tries = 0) => {
+        if (App.player.current && App.player.current.id !== track.id) return;
+        if (App.engine.duration() > 0 || tries > 12) { App.player.seek(pos); updateProgress(); return; }
+        setTimeout(() => seekWhenReady(tries + 1), 250);
+      };
+      setTimeout(seekWhenReady, 300);
+    }
+
+    updateNowPlayingUi();
+    App.render();
+    saveLastPlayback();
+    U.toast(`已载入上次播放：${track.title || track.name}${pos > 2 ? ` · ${U.fmtTime(pos)}` : ''}`, 'ok', 2600);
+    return track;
+  };
+
   /* ================================ 视图调度 ================================ */
   App.visibleTracks = function visibleTracks() {
     let list = App.state.tracks.slice();
@@ -256,6 +342,7 @@
     let el;
     switch (App.state.view) {
       case 'now': el = window.Views.nowPlaying(App); break;
+      case 'subtitle': el = window.Views.subtitle(App); break;
       case 'playlists': el = window.Views.playlists(App); break;
       case 'stats': el = window.Panels.stats(App); break;
       case 'eq': el = window.Panels.eq(App); break;
@@ -268,6 +355,8 @@
     const vb = host.querySelector('.view-body');
     if (vb && scrollTop) vb.scrollTop = scrollTop;
     $$('.nav-item[data-view]').forEach((n) => n.classList.toggle('active', n.dataset.view === App.state.view || (App.state.view === 'playlist' && n.dataset.view === 'playlists')));
+    const subBtn = $('#btnSubtitle');
+    if (subBtn) subBtn.classList.toggle('fav-on', App.state.view === 'subtitle');
     updateCounts();
     if (App.state.view === 'now') renderLyricsBox();
   };
@@ -277,6 +366,13 @@
     App.settings.ui.lastView = v;
     api.settings.set('ui.lastView', v);
     App.render();
+  };
+
+  /** 字幕 / 放映模式开关（Ctrl+Space，可在设置里改） */
+  App.toggleSubtitle = function (force) {
+    const to = typeof force === 'boolean' ? force : App.state.view !== 'subtitle';
+    App.setView(to ? 'subtitle' : 'now');
+    return to;
   };
 
   function renderLyricsBox() {
@@ -366,6 +462,37 @@
     $$('.track-row').forEach((r) => r.classList.toggle('playing', !!cur && r.dataset.id === cur.id));
   }
 
+  /* ================================ 封面 ================================ */
+  /**
+   * 手动给歌曲设置封面。
+   * 作用对象：优先「当前选中的那一首」，没有选中就作用于「正在播放的那首」。
+   */
+  App.setTrackCover = async function (explicitId) {
+    let id = explicitId;
+    if (!id) {
+      if (App.state.selection.size === 1) id = Array.from(App.state.selection)[0];
+      else if (App.state.selection.size > 1) { U.toast(`已选中 ${App.state.selection.size} 首，请只选一首再换封面`, 'err'); return; }
+      else if (App.player.current) id = App.player.current.id;
+    }
+    if (!id) { U.toast('请先选中一首歌，或播放一首歌', 'err'); return; }
+    const track = App.state.tracks.find((t) => t.id === id);
+    if (!track) { U.toast('未找到这首歌', 'err'); return; }
+
+    const r = await api.cover.pickFor(id);
+    if (!r || r.canceled) return;
+    if (!r.ok) { U.toast('设置封面失败：' + (r.error || '未知错误'), 'err', 5000); return; }
+
+    // 同一个 URL 会被 Chromium 缓存，换封面后必须让 URL 变一下，否则看到的还是旧图
+    U.bumpCover(id);
+    track.hasCover = true;
+    track.coverCustom = true;
+    if (App.player.current && App.player.current.id === id) App.player.current.hasCover = true;
+
+    updateNowPlayingUi();
+    App.render();
+    U.toast(`封面已更新（原图 ${r.sourceSize}）`, 'ok', 3000);
+  };
+
   /* ================================ 歌词 ================================ */
   async function loadLyricsFor(track) {
     await App.lyrics.loadFor(track);
@@ -420,7 +547,109 @@
     const m = U.modal('编辑歌词', track ? `${track.title || track.name}` : '', box, [apply, save]);
   };
 
-  function syncOverlays() {
+  const DESKTOP_SYNC_MS = 250;      // 桌面歌词窗的目标刷新率（4Hz）
+  const DESKTOP_FULL_MS = 2000;     // 歌词全文的兜底重发间隔
+  const SPEC_BARS = 40;             // 推给浮层的频谱柱数
+  let _lastDesktopSync = 0;
+  let _lastDesktopLinesKey = '';
+  let _lastDesktopFullAt = 0;
+
+  /**
+   * 把 analyser 的频谱降采样成几十根柱子推给浮层。
+   * 低频分辨率按指数分布加密（低频 bin 本来就少，线性取样会让低频柱几乎不动），
+   * 每根柱子取区间平均，避免柱子乱跳。
+   */
+  function downsampledSpectrum(bars) {
+    const data = App.engine.frequencyData();
+    if (!data || !data.length) return null;
+    const out = new Array(bars);
+    const N = data.length;
+    const start = 1;
+    const usable = Math.max(1, Math.floor(N * 0.72));   // 高频基本是空的，别浪费柱子
+    const gain = 1.05 * (Number(App.settings.lyrics && App.settings.lyrics.specGain) || 1);
+    for (let i = 0; i < bars; i++) {
+      let a = start + Math.pow(i / bars, 1.9) * (usable - start);
+      let b = start + Math.pow((i + 1) / bars, 1.9) * (usable - start);
+      a = Math.max(start, Math.min(N - 1, Math.floor(a)));
+      b = Math.max(a + 1, Math.min(N, Math.ceil(b)));
+      let sum = 0;
+      for (let k = a; k < b; k++) sum += data[k];
+      out[i] = Math.min(1, (sum / (b - a) / 255) * gain);
+    }
+    return out;
+  }
+
+  /** 低频/整体能量，用来驱动封面脉动与光晕强度 */
+  function spectrumEnergy(spec) {
+    if (!spec) return { bass: 0, level: 0 };
+    const n = spec.length;
+    let bass = 0;
+    const bn = Math.max(1, Math.round(n * 0.28));
+    for (let i = 0; i < bn; i++) bass += spec[i];
+    bass /= bn;
+    let level = 0;
+    for (let i = 0; i < n; i++) level += spec[i];
+    level /= n;
+    return { bass, level };
+  }
+
+  /**
+   * 桌面歌词窗的同步。
+   * 与迷你播放器分开：歌词正文有 1~2KB，没必要每 250ms 都在 IPC 上传一遍，
+   * 只在「歌词整体变了」时带上，平时只发进度。
+   *
+   * 但「变了才发」单独用会漏：浮层窗口可能在歌词推过之后才被创建（或用户重开），
+   * 它就永远等不到正文，一直显示「暂无歌词」。所以再加一条兜底：
+   * 每隔 DESKTOP_FULL_MS 无条件带一次全文，让任何时刻新建的窗口都能在两秒内补齐。
+   * （这条 bug 我踩过一次，自检也没抓到——因为自检场景里窗口早就存在了。）
+   */
+  function syncDesktopLyrics() {
+    const st = App.player.state();
+    const t = st.current;
+    const key = `${App.lyrics.lines.length}|${App.lyrics.sourcePath || ''}|${App.lyrics.title || ''}`;
+    const now = performance.now();
+    const keyChanged = key !== _lastDesktopLinesKey;
+    const dueFull = now - _lastDesktopFullAt >= DESKTOP_FULL_MS;
+    const payload = {
+      title: t ? (t.title || t.name) : '',
+      artist: t ? (t.artist || '') : '',
+      album: t ? (t.album || '') : '',
+      hasCover: !!(t && t.hasCover),
+      coverId: t ? t.id : null,
+      playing: st.playing,
+      position: st.position,
+      duration: st.duration,
+      // 播放速率：桌面歌词窗用它把位置在两次同步之间往前插值，
+      // 否则逐字光带只能跟着 4Hz 的同步一跳一跳地走（看着帧率很低）
+      rate: App.engine.rate,
+      mode: st.mode,
+      lyricIndex: App.lyrics.current,
+      lyricProgress: App.lyrics.progress(st.position),
+      settings: { theme: App.settings.theme, lyrics: App.settings.lyrics },
+      degraded: st.degraded
+    };
+
+    // 频谱：只在浮层开着「节奏」效果时才推，省掉无用的 IPC
+    const lyrCfg = App.settings.lyrics || {};
+    if (lyrCfg.specStyle && lyrCfg.specStyle !== 'none') {
+      const spec = downsampledSpectrum(SPEC_BARS);
+      if (spec) {
+        const e = spectrumEnergy(spec);
+        payload.spec = spec.join(',');
+        payload.bass = Math.round(e.bass * 100) / 100;
+        payload.level = Math.round(e.level * 100) / 100;
+      }
+    }
+    if (keyChanged || dueFull) {
+      _lastDesktopLinesKey = key;
+      _lastDesktopFullAt = now;
+      payload.lyricVersion = key;
+      payload.lines = App.lyrics.lines.map((l) => ({ t: l.t, text: l.text, tr: l.tr, isCJK: l.isCJK }));
+    }
+    api.lyrics.sync(payload).catch(() => {});
+  }
+
+  function syncOverlays(force) {
     const st = App.player.state();
     const t = st.current;
     // 歌词正文每次都带上：浮层/迷你窗口可能是在歌词载入「之后」才被创建的，
@@ -446,13 +675,40 @@
       degraded: st.degraded
     };
     api.player.syncMini(payload).catch(() => {});
+
+    // 桌面歌词：限频到 4Hz，其余情况（切歌、改设置）用 force 立刻推一次
+    const now = performance.now();
+    if (force || now - _lastDesktopSync >= DESKTOP_SYNC_MS) {
+      _lastDesktopSync = now;
+      syncDesktopLyrics();
+    }
   }
+
+  // 桌面歌词开关（独立置顶浮层，可在设置里改快捷键）
+  App.toggleDesktopLyrics = async function (force) {
+    const cur = !!(App.settings.lyrics && App.settings.lyrics.desktopEnabled);
+    let next;
+    // 主进程的 toggle 只认调用时的状态，为了幂等这里自己算目标值再传过去
+    if (typeof force === 'boolean') next = force;
+    else next = !cur;
+    const r = await api.lyrics.toggleDesktop(next);
+    const enabled = !!(r && typeof r.enabled === 'boolean' ? r.enabled : next);
+    App.settings.lyrics = { ...(App.settings.lyrics || {}), desktopEnabled: enabled };
+    updateQuickButtons();
+    syncOverlays(true);
+    U.toast(enabled ? '桌面歌词已开启' : '桌面歌词已关闭', 'ok', 1400);
+    return enabled;
+  };
 
   /* ================================ 标题栏 / 搜索 ================================ */
   function wireTitlebar() {
     $('#winMin').onclick = () => api.app.minimize();
     $('#winMax').onclick = () => api.app.maximize();
     $('#winClose').onclick = () => api.app.close();
+    const sub = $('#btnSubtitle');
+    if (sub) sub.onclick = () => App.toggleSubtitle();
+    const dl = $('#btnDesktopLyrics');
+    if (dl) dl.onclick = () => App.toggleDesktopLyrics();
   }
 
   /** 左侧导航栏 + 「添加文件夹」/「新建播放列表」按钮 */
@@ -604,6 +860,8 @@
   function updateQuickButtons() {
     $('#btnMute').textContent = App.engine.muted || App.engine.volume === 0 ? '🔇' : (App.engine.volume < 0.45 ? '🔉' : '🔊');
     $('#btnMini').classList.toggle('fav-on', !!App.settings.mini.visible);
+    const dl = $('#btnDesktopLyrics');
+    if (dl) dl.classList.toggle('fav-on', !!(App.settings.lyrics && App.settings.lyrics.desktopEnabled));
     $('#btnVisualizer').classList.toggle('fav-on', !$('#floatPanel').classList.contains('hidden'));
     $('#volume').style.setProperty('--fill', `${$('#volume').value}%`);
   }
@@ -624,7 +882,7 @@
     const cover = $('#npCover');
     if (t && t.hasCover) {
       cover.classList.remove('ph');
-      cover.style.backgroundImage = `url("aurora://local/cover?id=${t.id}")`;
+      cover.style.backgroundImage = `url("${U.coverUrlOf(t.id)}")`;
       cover.textContent = '';
     } else {
       cover.classList.add('ph');
@@ -1150,30 +1408,28 @@
   }
 
   /* ================================ 快捷键 ================================ */
+  /**
+   * 应用内快捷键已整体下架（用户要求），这里只保留一组固定的键盘操作。
+   * 全局快捷键仍然走主进程的 globalShortcut，在设置页里配。
+   */
   function wireShortcuts() {
     document.addEventListener('keydown', (e) => {
       const tag = (e.target.tagName || '').toLowerCase();
       const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
-      const S = App.settings.shortcuts.inApp || {};
-      if (e.key === 'Escape') { closePopover(); return; }
-      if (typing) {
-        if (e.key === 'Escape') e.target.blur();
+      if (e.key === 'Escape') {
+        closePopover();
+        // 字幕 / 放映模式下 Esc 直接退出（其它视图没有任何副作用）
+        if (App.state.view === 'subtitle') App.setView('now');
+        else if (typing) e.target.blur();
         return;
       }
-      for (const [action, accel] of Object.entries(S)) {
-        if (!accel) continue;
-        if (U.matchHotkey(e, accel)) {
-          e.preventDefault();
-          runAction(action);
-          return;
-        }
-      }
-      // 单键快捷（无修饰键）也支持
+      if (typing) return;
       if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); runAction('playPause'); }
       else if (e.key === 'ArrowRight' && !e.ctrlKey) { e.preventDefault(); runAction('seekForward'); }
       else if (e.key === 'ArrowLeft' && !e.ctrlKey) { e.preventDefault(); runAction('seekBackward'); }
       else if (e.key === 'ArrowUp' && !e.ctrlKey) { e.preventDefault(); runAction('volumeUp'); }
       else if (e.key === 'ArrowDown' && !e.ctrlKey) { e.preventDefault(); runAction('volumeDown'); }
+      else if (e.key === '/' && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); runAction('search'); }
     });
   }
 
@@ -1214,9 +1470,19 @@
     U.toast(`主题：${D.THEMES.find((t) => t.id === next).name}`, 'ok', 1500);
   }
 
+  /**
+   * 设置 / 清除一个快捷键。
+   * 传空值表示「清除」——此时把这个键从配置里**删掉**，而不是写成空字符串。
+   * 写空字符串的话，主进程里那条「空值补回默认」的兜底逻辑会在重启后把它复活，
+   * 用户看到的现象就是「清掉的快捷键自己又回来了」。
+   */
   App.setShortcut = async function (scope, action, accel) {
-    App.settings.shortcuts[scope][action] = accel;
-    await api.settings.set(`shortcuts.${scope}.${action}`, accel);
+    const next = { ...((App.settings.shortcuts && App.settings.shortcuts[scope]) || {}) };
+    const value = String(accel == null ? '' : accel).trim();
+    if (value) next[action] = value;
+    else delete next[action];
+    App.settings.shortcuts[scope] = next;
+    await saveSettings({ shortcuts: { ...App.settings.shortcuts, [scope]: next } }, { rerender: false });
     if (scope === 'global') {
       const r = await api.shortcuts.register();
       if (r.failed && r.failed.length) U.toast(`部分全局快捷键被占用：${r.failed.map((f) => f.accel).join(', ')}`, 'err', 4000);
@@ -1291,7 +1557,13 @@
     api.on('shortcut:action', ({ action }) => runAction(action));
     // 浮层/迷你窗口刚加载好时主动索要一次，避免开窗瞬间的空白
     api.on('overlay:request-sync', () => syncOverlays());
-    window.addEventListener('beforeunload', () => { App.player.flushStats({ reason: 'quit' }); });
+    window.addEventListener('beforeunload', () => {
+      App._quitting = true;
+      saveLastPlayback();
+      App.player.flushStats({ reason: 'quit' });
+    });
+    // beforeunload 里发出的 IPC 不保证送达，pagehide 再补一次
+    window.addEventListener('pagehide', () => { App._quitting = true; saveLastPlayback(); });
     window.addEventListener('aurora:degraded', () => {
       U.toast('音频引擎已切换为直通模式（均衡器/插件/变调暂不可用）', 'err', 6000);
     });

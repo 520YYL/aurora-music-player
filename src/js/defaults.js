@@ -71,32 +71,51 @@
       params: {}               // { [pluginId]: { [key]: value } }
     },
 
+    // 桌面歌词浮层
+    // 注意：clickThrough（鼠标穿透）和 locked 已经删掉。
+    // 穿透开着的时候窗口收不到任何鼠标事件，用户没法再点回按钮关掉它 —— 等于死锁，
+    // 所以这两个功能整体下架。
+    lyrics: {
+      desktopEnabled: false,
+      alwaysOnTop: true,
+      // 外观
+      style: 'karaoke',          // karaoke | classic | minimal
+      fontSize: 34,              // 14 - 90
+      weight: 700,
+      lineGap: 12,
+      opacity: 0.96,
+      color: '#ffffff',          // 常规字色
+      activeColor: '#7c5cff',    // 已唱部分的颜色
+      unsungColor: '#8a90a8',    // 还没唱到的部分
+      cnFont: '"Microsoft YaHei UI", "PingFang SC", sans-serif',
+      enFont: '"Segoe UI", "Arial", sans-serif',
+      shadow: { enabled: true, color: '#000000', blur: 14, x: 0, y: 2, opacity: 0.85 },
+      karaoke: true,             // 逐字高亮
+      sweepWidth: 8,             // 光带宽度（%），越小切得越硬
+      showTranslation: true,
+      showNextLine: true,
+      showProgressBar: false,
+      showCover: true,           // 左侧圆形封面
+      coverSize: 96,             // 圆形封面直径
+      coverShape: 'circle',      // circle | rounded
+      // 节奏可视化：封面随低频脉动 + 歌词下方一排横向频谱
+      specStyle: 'both',         // none | pulse | ring(仅频谱) | both
+      specSensitivity: 1,        // 0.4 - 2.5，整体灵敏度
+      // 底板：浮层本身是全透明的，遇到浅色壁纸歌词会看不清，所以默认给一层淡底
+      bg: { enabled: true, color: '#0b0d17', opacity: 0.55, radius: 18 },
+      pos: { x: null, y: null, w: 420, h: 150 }
+    },
+
     shortcuts: {
-      inApp: {
-        playPause: 'Space',
-        next: 'Ctrl+ArrowRight',
-        prev: 'Ctrl+ArrowLeft',
-        volumeUp: 'Ctrl+ArrowUp',
-        volumeDown: 'Ctrl+ArrowDown',
-        mute: 'Ctrl+M',
-        seekForward: 'ArrowRight',
-        seekBackward: 'ArrowLeft',
-        toggleMini: 'Ctrl+P',
-        toggleMain: 'Ctrl+Alt+A',
-        shuffle: 'Ctrl+S',
-        repeat: 'Ctrl+R',
-        favorite: 'Ctrl+D',
-        search: 'Ctrl+F',
-        theme: 'Ctrl+T',
-        eq: 'Ctrl+E',
-        stats: 'Ctrl+I'
-      },
+      // 应用内快捷键已按用户要求整体下架：设置页不再显示，启动也不再补默认值。
+      // 保留一个空对象占位，避免老配置里的 inApp 残留（迁移块会把它清空）。
+      inApp: {},
       global: {
         playPause: 'MediaPlayPause',
         next: 'MediaNextTrack',
         prev: 'MediaPreviousTrack',
-        stop: 'MediaStop',
-        toggleMain: 'Ctrl+Alt+A'
+        toggleMain: 'Ctrl+Alt+A',
+        toggleDesktopLyrics: 'Ctrl+Alt+L'
       },
       globalEnabled: true
     },
@@ -123,8 +142,15 @@
       viewMode: 'list',        // list | grid
       playlistId: 'all',
       showCoverArt: true,
-      zoom: 1
-    }
+      zoom: 1,
+      // 点右上角 ✕ 时隐藏到托盘（音乐继续放），而不是退出应用。
+      // 默认 true：直接退出会让正在听的歌突然中断，很容易被当成 bug。
+      closeToTray: true
+    },
+
+    // 上次播放到哪首、哪个位置（启动时自动装回播放器）
+    // 下划线开头：设置页不展示，属于运行状态而不是用户可选项
+    _lastPlayback: null,
   };
 
   const AUDIO_EXTS = ['.mp3', '.ogg', '.oga', '.m4a', '.m4b', '.mp4', '.flac', '.wav', '.aac', '.opus', '.weba', '.webm'];

@@ -19,6 +19,17 @@
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
+  /**
+   * 封面版本表：换了封面之后 URL 里必须带个变化的参数，
+   * 否则 Chromium 会继续用缓存里那张旧图（同一个 id、同一个 URL）。
+   */
+  const coverVer = new Map();
+  function bumpCover(id) { if (id) coverVer.set(id, Date.now()); }
+  function coverUrlOf(id) {
+    const v = coverVer.get(id);
+    return `aurora://local/cover?id=${id}${v ? `&v=${v}` : ''}`;
+  }
+
   function ce(tag, attrs, children) {
     const el = document.createElement(tag);
     if (attrs) {
@@ -44,6 +55,15 @@
     const m = Math.floor(sec / 60) % 60;
     const h = Math.floor(sec / 3600);
     return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+  }
+
+  /** 秒 -> m:ss（字幕 / 放映视图的时间角标用，不补前导零更好看） */
+  function fmtTimeTight(sec) {
+    if (!Number.isFinite(sec) || sec < 0) return '0:00';
+    const s = Math.floor(sec % 60);
+    const m = Math.floor(sec / 60) % 60;
+    const h = Math.floor(sec / 3600);
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
   }
 
   /** 毫秒 -> mm:ss（用于累计时长） */
@@ -212,8 +232,9 @@
   }
 
   window.U = {
-    $, $$, ce, pad, fmtTime, fmtMs, fmtLong, fmtSize, fmtDate, fmtDateTime, dayKey,
+    $, $$, ce, pad, fmtTime, fmtTimeTight, fmtMs, fmtLong, fmtSize, fmtDate, fmtDateTime, dayKey,
     escapeHtml, debounce, throttle, hotkeyFromEvent, matchHotkey, prettyHotkey,
-    toast, modal, confirmBox, clamp, hexToRgba, hasCJK, download, isMac
+    toast, modal, confirmBox, clamp, hexToRgba, hasCJK, download, isMac,
+    coverUrlOf, bumpCover
   };
 })();

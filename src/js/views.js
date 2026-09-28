@@ -7,7 +7,7 @@
   const { ce } = U;
 
   function coverUrl(track) {
-    if (track && track.hasCover) return `aurora://local/cover?id=${track.id}`;
+    if (track && track.hasCover) return U.coverUrlOf(track.id);
     return null;
   }
   function coverEl(track, cls) {
@@ -47,6 +47,12 @@
     tb.appendChild(ce('button', { class: 'btn sm', html: '📁 添加文件夹', onclick: () => app.addFolder() }));
     tb.appendChild(ce('div', { class: 'sep' }));
     tb.appendChild(ce('button', { class: 'btn sm', html: '▶ 播放全部', onclick: () => app.playAll() }));
+    // 手动换封面：作用于选中的那一首，没选中就是正在播放的那首
+    tb.appendChild(ce('button', {
+      class: 'btn sm', html: '🖼 添加歌曲封面',
+      title: '给选中的歌曲（或正在播放的歌曲）设置一张封面图',
+      onclick: () => app.setTrackCover()
+    }));
     if (app.state.view === 'playlist') {
       tb.appendChild(ce('button', { class: 'btn sm', html: '💾 导出', onclick: () => app.exportPlaylist() }));
       tb.appendChild(ce('button', { class: 'btn sm', html: '✏️ 重命名', onclick: () => app.renamePlaylist() }));

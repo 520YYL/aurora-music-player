@@ -9,7 +9,7 @@ const path = require('node:path');
 const { Readable } = require('node:stream');
 const { pathToFileURL } = require('node:url');
 
-const { JsonStore } = require('./store');
+const { JsonStore, deepMerge, deepClone } = require('./store');
 const scanner = require('./scanner');
 const { findLyrics } = require('./lyrics-finder');
 const DEFAULTS = require('../src/js/defaults.js');
@@ -21,6 +21,11 @@ const IS_DEV = !app.isPackaged;
 
 // 应用名（决定用户数据目录）
 app.setName('AuroraPlayer');
+
+// 允许在没有用户交互的情况下播放音频。
+// Chromium 默认会拦截「用户没点过页面就 play()」，而启动时恢复上次播放正属于这种情况；
+// 必须在 app ready 之前设置。
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 /* ------------------------------------------------------------------ */
 /* 自检模式： electron . --smoke  → 15 秒后写出 smoke-report.json 并退出  */
@@ -50,6 +55,9 @@ trace('module-loaded argv=' + process.argv.slice(1).join(' '));
 
 /** @type {BrowserWindow|null} */ let mainWindow = null;
 /** @type {BrowserWindow|null} */ let miniWindow = null;
+/** @type {BrowserWindow|null} */ let lyricsWindow = null;
+/** 渲染进程是否已经报过一次「贴合后的尺寸」——在那之前不要持久化窗口宽高 */
+let lyricsSized = false;
 /** @type {Tray|null} */ let tray = null;
 
 let settingsStore, libraryStore, statsStore, playlistsStore;
@@ -244,16 +252,38 @@ function initStores() {
     }
     if (guess.length) settingsStore.set('library.roots', guess);
   }
-  // 设置迁移：桌面歌词浮层功能已整体移除（用户要求），清掉遗留配置项
-  if (settingsStore.data && settingsStore.data.lyrics) {
-    delete settingsStore.data.lyrics;
-    const inApp = settingsStore.get('shortcuts.inApp') || {};
-    const glob = settingsStore.get('shortcuts.global') || {};
-    delete inApp.toggleDesktopLyrics;
-    delete glob.toggleDesktopLyrics;
-    settingsStore.set('shortcuts.inApp', inApp);
-    settingsStore.set('shortcuts.global', glob);
-    trace('settings migration: removed legacy desktop-lyrics config');
+  // 旧配置兼容：桌面歌词浮层曾经整体下线过，当时这里留了一段「启动就把 settings.lyrics
+  // 整个删掉」的清理迁移。功能现在已经恢复（圆形封面 + 逐字字幕），那段迁移必须去掉——
+  // 否则每次启动都会把 lyrics 连根删掉：桌面歌词设置无法保存，
+  // 连 shortcuts.inApp.toggleDesktopLyrics / shortcuts.global.toggleDesktopLyrics
+  // 也会在同一步被删，导致 Ctrl+L、Ctrl+Alt+L 永远不生效。
+  // 现在只做「缺字段补默认」，一个字段都不删。
+  {
+    const defL = DEFAULTS.DEFAULT_SETTINGS.lyrics || {};
+    // 已下线的桌面歌词字段：不清掉的话会一直留在 settings.json 里变成僵尸配置
+    const DROPPED = ['clickThrough', 'locked', 'align', 'stroke'];
+    const curL = settingsStore.get('lyrics', null);
+    let changed = false;
+    if (!curL || typeof curL !== 'object') {
+      settingsStore.set('lyrics', { ...defL });
+      changed = true;
+      trace('settings migration: seeded lyrics config');
+    } else {
+      let dropped = 0;
+      for (const k of DROPPED) { if (k in curL) { delete curL[k]; dropped++; } }
+      // pos 里早期存过 {width,height}，和 w/h 重复，一并清掉
+      if (curL.pos && typeof curL.pos === 'object') {
+        if ('width' in curL.pos || 'height' in curL.pos) { delete curL.pos.width; delete curL.pos.height; dropped++; }
+      }
+      // deepMerge 会原地修改第一个参数，所以先把默认值克隆一份再合并
+      const merged = deepMerge(deepClone(defL), curL);
+      if (JSON.stringify(merged) !== JSON.stringify(curL) || dropped) {
+        settingsStore.set('lyrics', merged);
+        changed = true;
+        trace(`settings migration: lyrics config normalized (dropped ${dropped} retired key(s))`);
+      }
+    }
+    if (changed) settingsStore.save();
   }
 
   // 全局快捷键若为空字符串会直接被跳过（等于没有全局快捷键，在桌面上按键毫无反应）。
@@ -262,6 +292,9 @@ function initStores() {
     const defGlobal = DEFAULTS.DEFAULT_SETTINGS.shortcuts.global || {};
     const cur = settingsStore.get('shortcuts.global', {}) || {};
     let filled = 0;
+    // 「停止播放」已下线（用户要求），从老配置里删掉，
+    // 否则设置页会留一条改不掉、也没用的僵尸快捷键
+    if ('stop' in cur) { delete cur.stop; filled++; }
     for (const [action, defAccel] of Object.entries(defGlobal)) {
       if (!cur[action] || String(cur[action]).trim() === '') { cur[action] = defAccel; filled++; }
     }
@@ -269,6 +302,27 @@ function initStores() {
       settingsStore.set('shortcuts.global', cur);
       trace(`settings migration: restored ${filled} empty global shortcut(s)`);
     }
+  }
+
+  // 应用内快捷键已整体下架（用户要求）。
+  // 原来这里有一段「空值补回默认」的兜底，它会把用户清掉的键在下次启动时复活，
+  // 正是「改了又回去」的元凶之一，现在一并去掉；老配置里残留下来的键也清干净。
+  {
+    const cur = settingsStore.get('shortcuts.inApp', null);
+    if (!cur || typeof cur !== 'object' || Object.keys(cur).length) {
+      settingsStore.set('shortcuts.inApp', {});
+      trace('settings migration: cleared retired in-app shortcuts');
+    }
+  }
+
+  // 设置迁移：「关闭窗口 = 隐藏到托盘」改为默认开启。
+  // 老配置里存着 false（旧默认值），会让点 ✕ 直接退出、音乐中断，所以一次性改成 true。
+  // 用 closeToTrayMigrated 打标记，用户之后自己关掉就不会再被翻回来。
+  if (!settingsStore.get('ui.closeToTrayMigrated', false)) {
+    const cur = settingsStore.get('ui.closeToTray', false);
+    settingsStore.set('ui.closeToTray', cur === false ? true : !!cur);
+    settingsStore.set('ui.closeToTrayMigrated', true);
+    trace('settings migration: ui.closeToTray -> true (hide to tray on close)');
   }
 
   // 设置迁移：v1 的 rememberPosition 默认为 true，但该功能当时并未真正接上，
@@ -303,15 +357,19 @@ function saveMetaCacheDebounced() {
   }, 1500);
 }
 
-function saveCover(id, buffer, format) {
+// 封面缓存的最长边。取 560px：桌面歌词的圆形封面最大 260px、正在播放页封面约 380px，
+// 560 足够 2 倍屏清晰，又不至于把缓存撑大（原值 420 在圆形封面放到 220px 以上就发虚）。
+const COVER_MAX_SIDE = 560;
+
+function saveCover(id, buffer, format, limit = COVER_MAX_SIDE) {
   try {
     const img = nativeImage.createFromBuffer(buffer);
     if (img.isEmpty()) return false;
     let out = img;
     const size = img.getSize();
-    const maxSide = Math.max(size.width, size.height);
-    if (maxSide > 420) {
-      const scale = 420 / maxSide;
+    const longest = Math.max(size.width, size.height);
+    if (longest > limit) {
+      const scale = limit / longest;
       out = img.resize({ width: Math.round(size.width * scale), height: Math.round(size.height * scale), quality: 'good' });
     }
     const png = /png/i.test(format || '');
@@ -397,10 +455,14 @@ function createMainWindow() {
   mainWindow.on('unmaximize', persist);
   mainWindow.on('close', (e) => {
     persist();
-    if (!quitting && settingsStore.get('ui.closeToTray', false)) {
-      e.preventDefault();
-      mainWindow.hide();
-    }
+    // 点右上角 ✕ 一律隐藏到托盘、音乐继续放，不再直接退出。
+    // 以前这里看 ui.closeToTray（默认 false），于是 ✕ 会真的关掉窗口 → 所有窗口关闭 → app.quit()，
+    // 歌就停了，用户会以为「关个窗口怎么音乐也没了」。
+    // 真正退出的入口是托盘菜单的「退出」和设置页的「退出应用」，它们会把 quitting 置为 true。
+    if (quitting) return;
+    e.preventDefault();
+    mainWindow.hide();
+    ensureTray();
   });
   mainWindow.on('closed', () => { mainWindow = null; });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -410,6 +472,64 @@ function createMainWindow() {
   mainWindow.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith('aurora://')) { e.preventDefault(); if (/^https?:/i.test(url)) shell.openExternal(url); }
   });
+}
+
+/**
+ * 桌面歌词浮层：透明、无边框、置顶，贴在桌面上显示字幕。
+ * 左侧圆形封面 + 右侧逐字歌词，外观全部由 settings.lyrics 驱动。
+ */
+function createLyricsWindow() {
+  if (lyricsWindow && !lyricsWindow.isDestroyed()) return lyricsWindow;
+  const L = settingsStore.get('lyrics', DEFAULTS.DEFAULT_SETTINGS.lyrics);
+  const pos = L.pos || {};
+  const w = pos.w || 1000;
+  const h = pos.h || 190;
+  const x = Number.isFinite(pos.x) ? pos.x : Math.round((screen.getPrimaryDisplay().workAreaSize.width - w) / 2);
+  const y = Number.isFinite(pos.y) ? pos.y : Math.round(screen.getPrimaryDisplay().workAreaSize.height - h - 90);
+
+  lyricsWindow = new BrowserWindow({
+    width: w, height: h, x, y,
+    minWidth: 420, minHeight: 110,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    // 不可拉伸：用户手动拉宽后会被「贴合内容」立刻缩回去，看着像回弹。
+    // 宽度和高度都由渲染进程按内容算，这里直接禁掉手动改大小。
+    resizable: false,
+    movable: true,
+    skipTaskbar: true,
+    focusable: true,
+    show: false,
+    fullscreenable: false,
+    alwaysOnTop: L.alwaysOnTop !== false,
+    title: 'Aurora 桌面歌词',
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      backgroundThrottling: false
+    }
+  });
+  // 'screen-saver' 层级才能压在其它置顶窗口之上
+  lyricsWindow.setAlwaysOnTop(L.alwaysOnTop !== false, 'screen-saver');
+  lyricsWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  lyricsWindow.loadURL(appUrl('lyrics.html'));
+  lyricsWindow.once('ready-to-show', () => { if (L.desktopEnabled) lyricsWindow.showInactive(); });
+  lyricsWindow.on('closed', () => { lyricsWindow = null; lyricsSized = false; });
+
+  const persistPos = () => {
+    if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
+    // 渲染进程还没报过「贴合后的尺寸」之前不要写盘：
+    // 窗口创建时用的是配置里的旧尺寸，这时候存一次就会把旧宽高又写回去，
+    // 把自动贴合的结果覆盖掉（下次启动又变成 1000×190 的大框）。
+    if (!lyricsSized) return;
+    settingsStore.set('lyrics.pos', lyricsWindow.getBounds());
+  };
+  lyricsWindow.on('move', persistPos);
+  if (L.locked) lyricsWindow.setResizable(false);
+  return lyricsWindow;
 }
 
 function createMiniWindow() {
@@ -658,8 +778,8 @@ function computeStatsSummary() {
 /* 快捷键                                                              */
 /* ------------------------------------------------------------------ */
 const GLOBAL_ACTIONS = {
-  playPause: 'playPause', next: 'next', prev: 'prev', stop: 'stop',
-  toggleMain: 'toggleMain', toggleMini: 'toggleMini'
+  playPause: 'playPause', next: 'next', prev: 'prev',
+  toggleMain: 'toggleMain', toggleMini: 'toggleMini', toggleDesktopLyrics: 'toggleDesktopLyrics'
 };
 
 function toElectronAccel(accel) {
@@ -699,12 +819,29 @@ function registerGlobalShortcuts() {
 function handleGlobalAction(action) {
   if (action === 'toggleMain') { toggleMainWindow(); return; }
   if (action === 'toggleMini') { toggleMini(); return; }
+  if (action === 'toggleDesktopLyrics') { toggleDesktopLyrics(); return; }
   broadcast('shortcut:action', { action });
 }
 
 function toggleMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()) mainWindow.hide();
   else showMain();
+}
+
+/** 桌面歌词开关。force 省略时取反当前状态。 */
+function toggleDesktopLyrics(force) {
+  const cur = settingsStore.get('lyrics.desktopEnabled', false);
+  const next = typeof force === 'boolean' ? force : !cur;
+  settingsStore.set('lyrics.desktopEnabled', next);
+  settingsStore.save();
+  if (next) {
+    const w = createLyricsWindow();
+    w.showInactive();
+  } else if (lyricsWindow && !lyricsWindow.isDestroyed()) {
+    lyricsWindow.hide();
+  }
+  broadcast('settings:changed', { lyrics: settingsStore.get('lyrics') });
+  return next;
 }
 
 function toggleMini(force) {
@@ -790,6 +927,7 @@ function setupIpc() {
     broadcast('settings:changed', patch, e.sender.id);
     if (patch && patch.shortcuts) registerGlobalShortcuts();
     if (patch && patch.mini) applyMiniSettings(patch.mini);
+    if (patch && patch.lyrics) applyLyricsSettings(patch.lyrics);
     return settingsStore.get();
   });
   handle('settings:reset', () => { settingsStore.data = JSON.parse(JSON.stringify(DEFAULTS.DEFAULT_SETTINGS)); settingsStore.save(); return settingsStore.get(); });
@@ -852,6 +990,58 @@ function setupIpc() {
   });
   handle('library:showInFolder', (e, p) => { shell.showItemInFolder(p); return { ok: true }; });
 
+  /**
+   * 手动给一首歌设置封面（内嵌封面缺失、或就是不喜欢的时候用）。
+   * 图片按显示需要缩放后写进封面缓存；不修改音乐文件本身。
+   */
+  handle('cover:pickFor', async (e, id) => {
+    const tracks = libraryStore.get('tracks', []);
+    const t = tracks.find((x) => x.id === id);
+    if (!t) return { ok: false, error: '未找到曲目' };
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: `选择封面 — ${t.title || t.name}`,
+      filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif', 'avif'] }],
+      properties: ['openFile']
+    });
+    if (res.canceled || !res.filePaths.length) return { canceled: true };
+
+    const src = res.filePaths[0];
+    let buf;
+    try { buf = await fsp.readFile(src); } catch (err) { return { ok: false, error: '读取失败：' + (err.message || err) }; }
+    const img = nativeImage.createFromBuffer(buf);
+    if (img.isEmpty()) return { ok: false, error: '这个文件不是能识别的图片' };
+    const dim = img.getSize();
+    const format = /\.png$/i.test(src) ? 'image/png' : 'image/jpeg';
+
+    // 同一首歌可能同时存在 .jpg 与 .png（内置封面是 jpg、手选的是 png）。
+    // 协议层按 jpg → png → webp 的顺序取第一个命中的文件，所以必须把另一种删掉，
+    // 否则用户换了封面却还是看到旧的那张。
+    for (const ext of ['.jpg', '.png', '.webp']) {
+      try { fs.unlinkSync(path.join(COVERS_DIR, id + ext)); } catch { /* 不存在则忽略 */ }
+    }
+    if (!saveCover(id, buf, format)) return { ok: false, error: '写入封面缓存失败' };
+
+    t.hasCover = true;
+    t.coverCustom = true;
+    libraryStore.set('tracks', tracks);
+    libraryStore.save();
+    // 让缓存里的元数据也标记上，下次扫描不会把这个标记抹掉
+    for (const key of Object.keys(metaCache)) {
+      const c = metaCache[key];
+      if (c && c.data && c.data.id === id) { c.data.hasCover = true; c.data.coverCustom = true; }
+    }
+    saveMetaCacheDebounced();
+
+    return {
+      ok: true,
+      id,
+      source: src,
+      sourceSize: `${dim.width}×${dim.height}`,
+      // 圆形封面按 center-crop 填充：长边缩到 560px 以内，短边方向居中裁掉多余部分
+      note: `原图 ${dim.width}×${dim.height}；显示时短边会被裁掉一部分，不会拉伸变形`
+    };
+  });
+
   handle('covers:get', async (e, id) => {
     for (const ext of ['.jpg', '.png', '.webp']) {
       const p = path.join(COVERS_DIR, id + ext);
@@ -904,6 +1094,37 @@ function setupIpc() {
       return files.filter((f) => /\.(lrc|txt)$/i.test(f)).map((f) => ({ name: f, path: path.join(LYRICS_DIR, f) }));
     } catch { return []; }
   });
+
+  // 桌面歌词窗口
+  handle('lyricsWin:toggle', (e, force) => ({ enabled: toggleDesktopLyrics(force) }));
+  handle('lyricsWin:show', () => { toggleDesktopLyrics(true); return { ok: true }; });
+  handle('lyricsWin:hide', () => { toggleDesktopLyrics(false); return { ok: true }; });
+  handle('lyricsWin:update', (e, patch) => {
+    if (patch && typeof patch === 'object') {
+      settingsStore.merge({ lyrics: patch });
+      settingsStore.save();
+      const L = settingsStore.get('lyrics');
+      applyLyricsSettings(L);
+      broadcast('lyrics:settings', L);
+      broadcast('settings:changed', { lyrics: L }, e.sender.id);
+    }
+    return { ok: true };
+  });
+  handle('lyricsWin:setAlwaysOnTop', (e, on) => {
+    settingsStore.set('lyrics.alwaysOnTop', !!on);
+    settingsStore.save();
+    if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.setAlwaysOnTop(!!on, 'screen-saver');
+    return { ok: true };
+  });
+  handle('lyricsWin:resetPos', () => {
+    if (lyricsWindow && !lyricsWindow.isDestroyed()) {
+      const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+      lyricsWindow.setBounds({ x: Math.round((width - 1000) / 2), y: height - 280, width: 1000, height: 190 });
+    }
+    return { ok: true };
+  });
+  handle('lyricsWin:sync', (e, payload) => { broadcast('lyrics:sync', payload); return { ok: true }; });
+  handle('lyricsWin:getBounds', () => (lyricsWindow && !lyricsWindow.isDestroyed() ? lyricsWindow.getBounds() : null));
 
   // 迷你播放器
   handle('overlay:requestSync', () => { broadcast('overlay:request-sync', {}); return { ok: true }; });
@@ -1102,10 +1323,30 @@ function setupIpc() {
   });
   handle('win:setSize', (e, w2, h2) => {
     const w = BrowserWindow.fromWebContents(e.sender);
-    if (w) w.setSize(Math.round(w2), Math.round(h2), true);
+    if (!w) return { ok: false };
+    const width = Math.max(1, Math.round(Number(w2) || 0));
+    const height = Math.max(1, Math.round(Number(h2) || 0));
+    // 桌面歌词浮层必须用 setBounds 改宽高：它的内容区高度等于窗口高（没有系统标题栏），
+    // setSize 在透明窗上偶尔会漏掉一维，导致宽度改了高度没跟上。
+    if (lyricsWindow && !lyricsWindow.isDestroyed() && w.id === lyricsWindow.id) {
+      const b = lyricsWindow.getBounds();
+      lyricsWindow.setBounds({ x: b.x, y: b.y, width, height });
+      // 从这一刻起，窗口宽高是渲染进程按内容算出来的，之后才允许写盘
+      lyricsSized = true;
+    } else {
+      w.setSize(width, height, true);
+    }
     return { ok: true };
   });
   handle('win:focusMain', () => { showMain(); return { ok: true }; });
+  // 诊断：两个窗口的实际状态
+  handle('debug:windows', () => {
+    const info = (w, name) => (!w || w.isDestroyed() ? { name, exists: false } : {
+      name, exists: true, visible: w.isVisible(), minimized: w.isMinimized(),
+      bounds: w.getBounds(), title: w.getTitle()
+    });
+    return { main: info(mainWindow, 'main'), lyrics: info(lyricsWindow, 'lyrics'), mini: info(miniWindow, 'mini') };
+  });
 
   // 快捷键
   handle('shortcuts:register', () => registerGlobalShortcuts());
@@ -1180,6 +1421,17 @@ function setupIpc() {
   });
 }
 
+function applyLyricsSettings(patch) {
+  if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
+  const L = settingsStore.get('lyrics', DEFAULTS.DEFAULT_SETTINGS.lyrics);
+  if (patch && typeof patch.alwaysOnTop === 'boolean') lyricsWindow.setAlwaysOnTop(patch.alwaysOnTop, 'screen-saver');
+  if (patch && patch.pos && (Number.isFinite(patch.pos.w) || Number.isFinite(patch.pos.h))) {
+    const b = lyricsWindow.getBounds();
+    lyricsWindow.setBounds({ x: b.x, y: b.y, width: patch.pos.w || b.width, height: patch.pos.h || b.height });
+  }
+  broadcast('lyrics:settings', L);
+}
+
 function applyMiniSettings(patch) {
   const M = settingsStore.get('mini', DEFAULTS.DEFAULT_SETTINGS.mini);
   if (patch && typeof patch.visible === 'boolean') toggleMini(patch.visible);
@@ -1206,6 +1458,7 @@ function ensureTray() {
       { label: '下一首', click: () => broadcast('shortcut:action', { action: 'next' }) },
       { type: 'separator' },
       { label: '迷你播放器', type: 'checkbox', checked: settingsStore.get('mini.visible', false), click: (i) => toggleMini(i.checked) },
+      { label: '桌面歌词', type: 'checkbox', checked: settingsStore.get('lyrics.desktopEnabled', false), click: (i) => toggleDesktopLyrics(i.checked) },
       { type: 'separator' },
       { label: '退出', click: () => { quitting = true; app.quit(); } }
     ]));
@@ -1864,6 +2117,8 @@ app.whenReady().then(async () => {
   registerGlobalShortcuts();
 
   if (settingsStore.get('mini.visible', false)) { createMiniWindow(); }
+  // 上次开着桌面歌词的话，启动时自动恢复
+  if (settingsStore.get('lyrics.desktopEnabled', false)) { createLyricsWindow(); }
 
   // 首次运行时在桌面创建快捷方式（方便直接使用）
   if (!settingsStore.get('ui.shortcutCreated', false)) {
@@ -1883,8 +2138,12 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   trace('window-all-closed');
+  // 正常情况下「主窗口关闭」已经被 close 事件改成了隐藏，走不到这里。
+  // 真的走到这里说明窗口确实都被销毁了（例如托盘退出、或关掉窗口后又关了迷你窗/歌词窗），
+  // 这时才退出应用。
   if (process.platform !== 'darwin') {
-    if (!settingsStore?.get('ui.closeToTray', false)) { quitting = true; app.quit(); }
+    quitting = true;
+    app.quit();
   }
 });
 

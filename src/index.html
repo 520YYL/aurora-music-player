@@ -22,6 +22,8 @@
         <span class="clear hidden" id="searchClear">✕</span>
       </div>
       <div class="spacer"></div>
+      <button class="btn icon ghost tooltip" id="btnSubtitle" data-tip="字幕放映模式 (Ctrl+空格)">🎬</button>
+      <button class="btn icon ghost tooltip" id="btnDesktopLyrics" data-tip="桌面歌词 (Ctrl+L)">🖥️</button>
       <div class="win-controls">
         <button id="winMin" class="tooltip" data-tip="最小化">─</button>
         <button id="winMax" class="tooltip" data-tip="最大化">☐</button>
@@ -32,6 +34,7 @@
     <div class="body">
       <aside class="sidebar panel">
         <div class="nav-item" data-view="now"><span class="ic">🎧</span><span>正在播放</span></div>
+        <div class="nav-item" data-view="subtitle"><span class="ic">🎬</span><span>字幕放映</span></div>
         <div class="nav-item active" data-view="library"><span class="ic">🎵</span><span>全部音乐</span><span class="count" id="cntAll">0</span></div>
         <div class="nav-item" data-view="favorites"><span class="ic">❤️</span><span>我的收藏</span><span class="count" id="cntFav">0</span></div>
         <div class="nav-item" data-view="recent"><span class="ic">🕘</span><span>最近播放</span></div>
@@ -135,6 +138,7 @@
   <script src="js/visualizer.js"></script>
   <script src="js/dragsort.js"></script>
   <script src="js/views.js"></script>
+  <script src="js/subtitle.js"></script>
   <script src="js/panels.js"></script>
   <script src="js/app.js"></script>
 </body>

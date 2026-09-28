@@ -200,6 +200,121 @@
 }
 .ly-empty { color: var(--muted); text-align: center; padding: 60px 20px; font-size: 14px; line-height: 2; }
 
+/* ==========================================================================
+   字幕 / 放映视图
+   一整页沉浸式字幕：模糊封面马赛克打底 + 居中大字 + 卡拉OK 染色。
+   ========================================================================== */
+.subtitle-view {
+  position: relative; height: 100%; overflow: hidden; border-radius: var(--radius);
+  display: flex; flex-direction: column;
+  background: var(--app-bg); color: #fff;
+  animation: subIn .5s var(--ease);
+}
+@keyframes subIn { from { opacity: 0; transform: scale(.995); } to { opacity: 1; transform: none; } }
+
+/* 背景：当前曲库的封面拼成马赛克，整体压暗 + 模糊 */
+.sub-bg { position: absolute; inset: 0; overflow: hidden; }
+.sub-mosaic { position: absolute; inset: -6%; display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; }
+.sub-mosaic > i {
+  display: block; border-radius: 8px; background-size: cover; background-position: center;
+  background-color: rgba(255, 255, 255, .05);
+  filter: saturate(.85) brightness(.95);
+  animation: subDrift 46s ease-in-out infinite alternate;
+}
+@keyframes subDrift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(-1.6%, -2.2%, 0) scale(1.07); }
+}
+.sub-bgblur { position: absolute; inset: 0; backdrop-filter: blur(34px) saturate(1.15); -webkit-backdrop-filter: blur(34px) saturate(1.15); }
+.sub-scrim {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(62% 58% at 50% 46%, rgba(6, 7, 14, .30) 0%, rgba(6, 7, 14, .74) 70%, rgba(6, 7, 14, .9) 100%),
+    linear-gradient(180deg, rgba(6, 7, 14, .78) 0%, rgba(6, 7, 14, .34) 34%, rgba(6, 7, 14, .52) 68%, rgba(6, 7, 14, .92) 100%);
+}
+
+/* 播放时缓慢呼吸的极光光晕 */
+.sub-glow {
+  position: absolute; left: 50%; top: 50%; width: 78vw; height: 78vh; transform: translate(-50%, -50%);
+  pointer-events: none; opacity: 0; transition: opacity 1.1s var(--ease);
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 34%, transparent), transparent 72%);
+  filter: blur(58px);
+}
+.sub-glow.on { opacity: .5; animation: subBreathe 9s ease-in-out infinite alternate; }
+@keyframes subBreathe { from { transform: translate(-50%, -50%) scale(.94); } to { transform: translate(-50%, -50%) scale(1.1); } }
+
+/* 顶栏 */
+.sub-head {
+  position: relative; z-index: 3; flex: none; display: flex; align-items: flex-start; gap: 16px;
+  padding: 24px 30px 10px;
+}
+.sub-meta { min-width: 0; }
+.sub-kicker {
+  font-size: 10.5px; letter-spacing: 3px; font-weight: 700; text-transform: uppercase;
+  color: color-mix(in srgb, var(--accent2) 82%, #fff); opacity: .9; margin-bottom: 7px;
+}
+.sub-title {
+  font-size: 19px; font-weight: 800; letter-spacing: .3px; text-shadow: 0 3px 22px rgba(0, 0, 0, .6);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46vw;
+}
+.sub-artist { font-size: 12.5px; color: rgba(255, 255, 255, .62); margin-top: 4px; }
+.sub-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.sub-clock {
+  font-family: var(--mono); font-size: 12.5px; color: rgba(255, 255, 255, .58);
+  font-variant-numeric: tabular-nums; padding-right: 8px; letter-spacing: 1px;
+}
+.sub-icon {
+  width: 34px; height: 34px; border-radius: 50%; cursor: pointer; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, .09); border: 1px solid rgba(255, 255, 255, .16); color: #fff;
+  transition: all var(--dur) var(--ease); backdrop-filter: blur(10px);
+}
+.sub-icon:hover { background: rgba(255, 255, 255, .2); transform: translateY(-1px); }
+
+/* 歌词舞台 */
+.sub-stage { position: relative; z-index: 3; flex: 1; min-height: 0; overflow: hidden; }
+.sub-column {
+  position: absolute; left: 0; right: 0; top: 34%;
+  padding: 40px 0; text-align: center; will-change: transform;
+  transition: transform .78s cubic-bezier(.22, .78, .2, 1);
+  mask-image: linear-gradient(180deg, transparent 0, #000 16%, #000 62%, transparent 97%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 16%, #000 62%, transparent 97%);
+}
+.sub-line {
+  padding: 11px 8%; font-size: clamp(19px, 2.35vw, 32px); font-weight: 700; line-height: 1.34;
+  letter-spacing: 1px; color: rgba(255, 255, 255, .3);
+  transform: scale(.97); transform-origin: center center;
+  transition: color .5s var(--ease), transform .5s var(--ease), opacity .5s var(--ease);
+}
+.sub-line.zh { font-family: var(--ly-cn, var(--font)); }
+.sub-line.en { font-family: var(--ly-en, var(--font)); }
+.sub-line .sub-tr { display: block; font-size: .6em; font-weight: 500; opacity: .62; margin-top: 7px; letter-spacing: .6px; }
+.sub-line.past { color: rgba(255, 255, 255, .14); }
+.sub-line.active {
+  color: #fff; font-size: clamp(23px, 2.9vw, 40px); font-weight: 800;
+  transform: scale(1); letter-spacing: 1.6px;
+  text-shadow: 0 4px 40px rgba(0, 0, 0, .72), 0 0 58px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+/* 唱到的那一行：整行高亮 + 缓慢呼吸的极光光晕。
+   不做「逐字硬切」染色：那需要 background-clip:text 加硬边渐变，中文在这幺大的字号下
+   切面会很生硬、显廉价；改用把整句按进度分段落推进（见 subtitle.js 的 chunk()），
+   句子随歌声一段段浮现，观感更稳。 */
+.sub-line.active .sub-src { position: relative; }
+.sub-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; }
+.sub-empty .big { font-size: 46px; opacity: .55; }
+.sub-empty h3 { margin: 6px 0 0; font-size: 16px; font-weight: 700; color: rgba(255, 255, 255, .82); }
+.sub-empty p { margin: 0; font-size: 12.5px; color: rgba(255, 255, 255, .5); }
+
+/* 底栏进度 */
+.sub-foot { position: relative; z-index: 3; flex: none; padding: 10px 30px 22px; }
+.sub-frow { display: flex; align-items: center; gap: 12px; }
+.sub-frow > span { font-family: var(--mono); font-size: 11.5px; color: rgba(255, 255, 255, .62); font-variant-numeric: tabular-nums; min-width: 38px; }
+.sub-bar { position: relative; flex: 1; height: 4px; border-radius: 999px; background: rgba(255, 255, 255, .16); overflow: hidden; }
+.sub-bar > i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent2)); box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 65%, transparent); }
+.sub-fmeta { margin-top: 9px; }
+.sub-ftext { flex: 1; min-width: 0; font-size: 11.5px; color: rgba(255, 255, 255, .45); }
+.sub-hint { font-size: 11px; color: rgba(255, 255, 255, .34); letter-spacing: .3px; }
+
 /* ---------------------------- 统计 ---------------------------- */
 .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .stat-card { padding: 14px 16px; }

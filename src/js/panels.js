@@ -408,10 +408,8 @@
   /* 设置                                                                */
   /* ================================================================== */
   const SC_LABELS = {
-    playPause: '播放 / 暂停', next: '下一首', prev: '上一首', volumeUp: '音量 +', volumeDown: '音量 −',
-    mute: '静音切换', seekForward: '快进 5 秒', seekBackward: '后退 5 秒',
-    toggleMini: '开关迷你播放器', toggleMain: '显示 / 隐藏主窗口', shuffle: '随机播放', repeat: '循环模式',
-    favorite: '收藏当前歌曲', search: '聚焦搜索框', theme: '切换主题', eq: '打开均衡器', stats: '打开听歌统计', stop: '停止播放'
+    playPause: '播放 / 暂停', next: '下一首', prev: '上一首',
+    toggleMain: '显示 / 隐藏主窗口', toggleMini: '开关迷你播放器', toggleDesktopLyrics: '桌面歌词'
   };
 
   function settings(app) {
@@ -489,6 +487,22 @@
     const P = s.playback;
     const secP = section('播放与过渡', '切歌过渡效果、变速变调、播放行为');
     secP.dataset.sec = 'playback';
+    {
+      const L = s.lyrics || {};
+      const styleSel = ce('select', {}, []);
+      for (const [v, t] of [['karaoke', '逐字（唱到哪亮到哪）'], ['classic', '整句高亮'], ['minimal', '极简（无阴影）']]) {
+        styleSel.appendChild(ce('option', { value: v, text: t, selected: (L.style || 'karaoke') === v }));
+      }
+      styleSel.onchange = () => app.saveSettings({ lyrics: { ...L, style: styleSel.value } });
+      secP.appendChild(setRow('桌面歌词', '独立透明浮层：圆形封面 + 逐字字幕。右键浮层可调外观 / 关闭', [
+        sw(!!L.desktopEnabled, (v) => app.toggleDesktopLyrics(v)),
+        ce('button', { class: 'btn sm', text: '↺ 回到默认位置', onclick: () => window.aurora.lyrics.resetPos() })
+      ]));
+      secP.appendChild(setRow('桌面歌词风格', '更多外观选项在浮层上右键打开', [styleSel]));
+      secP.appendChild(setRow('桌面歌词字号', '浮层上还能调行距、透明度、配色、封面', [
+        slider(14, 90, 1, L.fontSize || 34, (v) => app.saveSettings({ lyrics: { ...L, fontSize: v } }), (v) => `${v}px`)
+      ]));
+    }
     secP.appendChild(setRow('切歌过渡效果', '切换歌曲时的衔接方式', [select(D.TRANSITIONS.map((t) => ({ value: t.id, label: `${t.name} — ${t.desc}` })), P.transition, (v) => app.saveSettings({ playback: { ...P, transition: v } }))]));
     secP.appendChild(setRow('过渡时长', null, [slider(200, 5000, 100, P.transitionMs, (v) => app.saveSettings({ playback: { ...P, transitionMs: v } }), (v) => `${(v / 1000).toFixed(1)}s`)]));
     secP.appendChild(setRow('变速不变调', '关闭后变速会像磁带一样改变音高', [sw(P.preservePitch, (v) => { app.saveSettings({ playback: { ...P, preservePitch: v } }); app.player.engine.setPreservePitch(v); })]));
@@ -504,16 +518,12 @@
     sections.appendChild(secP);
 
     /* ---------- 快捷键 ---------- */
-    const secS = section('快捷键', '点击按键框后按下想设置的组合键；支持全局媒体键');
+    const secS = section('快捷键', '全局快捷键在窗口不在前台时也能响应（媒体键 / 全局组合键）');
     secS.dataset.sec = 'shortcuts';
-    secS.appendChild(setRow('启用全局快捷键', '窗口不在前台时也能响应（媒体键 / 全局组合键）', [sw(s.shortcuts.globalEnabled, (v) => app.saveSettings({ shortcuts: { ...s.shortcuts, globalEnabled: v } }))]));
-    secS.appendChild(ce('div', { class: 'muted', style: { fontSize: '12.5px', margin: '8px 0' }, text: '应用内快捷键' }));
-    const sc1 = ce('div', { class: 'sc-list' });
-    for (const [key, label] of Object.entries(SC_LABELS)) {
-      if (s.shortcuts.inApp[key] === undefined) continue;
-      sc1.appendChild(scItem(app, 'inApp', key, label, s.shortcuts.inApp[key]));
-    }
-    secS.appendChild(sc1);
+    // 应用内快捷键已按用户要求整体下架：只保留这一句提示，不再渲染应用内那一组。
+    secS.appendChild(ce('div', { class: 'muted', style: { fontSize: '12.5px', margin: '2px 0 10px', lineHeight: '1.9' } },
+      [ce('div', { text: '应用内快捷键已移除，键盘操作保留这几项（不可配置）：' }),
+       ce('div', { class: 'mono', style: { fontSize: '11.5px', marginTop: '4px' }, text: '空格 播放/暂停 · ← → 快进/后退 5 秒 · ↑ ↓ 音量 · Esc 关闭弹层 · / 聚焦搜索框 · 桌面歌词窗上右键可调外观' })]));
     secS.appendChild(ce('div', { class: 'muted', style: { fontSize: '12.5px', margin: '14px 0 8px' }, text: '全局快捷键（系统级）' }));
     const sc2 = ce('div', { class: 'sc-list' });
     for (const [key, label] of Object.entries(SC_LABELS)) {
@@ -572,7 +582,7 @@
     secD.appendChild(setRow('桌面快捷方式', '在系统桌面创建启动图标', [
       ce('button', { class: 'btn sm primary', text: '🖥 创建桌面快捷方式', onclick: () => app.createShortcut() })
     ]));
-    secD.appendChild(setRow('关闭窗口时', null, [sw(s.ui.closeToTray, (v) => app.setCloseToTray(v))].map((x) => x)));
+    secD.appendChild(setRow('关闭窗口时', '关闭后隐藏到托盘，音乐继续播放；要退出请用托盘菜单的「退出」', [sw(s.ui.closeToTray !== false, (v) => app.setCloseToTray(v))]));
     secD.appendChild(ce('div', { class: 'divider' }));
     const about = app.state.appInfo;
     secD.appendChild(ce('div', { class: 'muted', style: { fontSize: '12.5px', lineHeight: '2' }, html: about ? `Aurora 极光音乐 v${about.version}<br>Electron ${about.electron} · Chromium ${about.chrome} · Node ${about.node}<br>播放格式：MP3 / OGG / M4A / FLAC / WAV / AAC / OPUS<br>数据目录：<span class="mono">${U.escapeHtml(about.dataDir)}</span>` : '' }));
