@@ -746,6 +746,21 @@ async function streamResponse(source, id, req, hint) {
   return audioResponse(up);
 }
 
+/**
+ * 下载用：解析出「能直接抓的直链 + 该带的请求头」。
+ * 兜底到哔哩哔哩的曲目交给 B 站那条链路（要有 buvid3 cookie、Referer 也不一样）。
+ */
+async function downloadTarget(source, id, hint) {
+  if (!PROVIDERS[source]) throw new Error('未知音源：' + source);
+  const info = await getStreamInfo(source, id, hint);
+  if (info.via === 'bilibili' && info.bvid) return await online.downloadTarget(info.bvid);
+
+  const headers = { 'User-Agent': UA };
+  if (info.via === 'kugou') headers.Referer = 'https://www.kugou.com/';
+  if (info.via === 'netease') headers.Referer = 'https://music.163.com/';
+  return { url: info.url, headers, via: info.via };
+}
+
 /* ==================================================================== */
 /* 封面代理（网易云的封面地址要先解析一次，QQ / 酷狗 的可以直接拼）        */
 /* ==================================================================== */
@@ -794,4 +809,4 @@ async function imageResponse(source, id) {
   });
 }
 
-module.exports = { search, streamResponse, imageResponse, PROVIDER_NAMES };
+module.exports = { search, streamResponse, imageResponse, downloadTarget, PROVIDER_NAMES };

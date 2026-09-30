@@ -278,6 +278,7 @@
           class: 'btn sm', text: '🌐 在 B 站中打开',
           onclick: () => window.aurora.app.openExternal('https://www.bilibili.com/video/' + encodeURIComponent(t.videoId))
         }),
+        ce('button', { class: 'btn sm', text: '⤓ 下载到本地', onclick: () => app.downloadOnline(t) }),
         ce('button', { class: 'btn sm', text: app.lyrics.sourcePath ? '🔄 重新载入歌词' : '🔍 查找歌词', onclick: () => app.reloadLyrics(true) })
       ] : [
         ce('button', { class: 'btn sm', text: '📂 所在文件夹', onclick: () => window.aurora.library.showInFolder(t.path) }),
@@ -362,6 +363,8 @@
       })
     ]));
     el.addEventListener('click', () => app.playOnlineAt(i, list));
+    // 右键：播放 / 下载到本地 / 收藏（在线曲目没有本地文件，所以和本地曲目用不同的菜单）
+    el.addEventListener('contextmenu', (e) => app.onlineContextMenu(e, t, i, list));
     return el;
   }
 

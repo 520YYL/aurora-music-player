@@ -289,7 +289,8 @@ function getStreamInfo(bvid) {
   return p;
 }
 
-async function fetchUpstream(url, range) {
+/** 上游请求头（下载时复用；Range 由调用方另外拼） */
+async function upstreamHeaders() {
   const cookie = await ensureCookie();
   const headers = {
     'User-Agent': UA,
@@ -300,8 +301,22 @@ async function fetchUpstream(url, range) {
     'Origin': 'https://www.bilibili.com'
   };
   if (cookie) headers.Cookie = cookie;
+  return headers;
+}
+
+async function fetchUpstream(url, range) {
+  const headers = await upstreamHeaders();
   if (range) headers.Range = range;
   return fetch(url, { headers });
+}
+
+/**
+ * 下载用：哔哩哔哩的 dash 音频直链必须带 buvid3 cookie 和 B 站 Referer，
+ * 所以把「直链 + 请求头」一起交出去。
+ */
+async function downloadTarget(bvid) {
+  const info = await getStreamInfo(bvid);
+  return { url: info.url, headers: await upstreamHeaders(), via: 'bilibili' };
 }
 
 async function streamResponse(bvid, req) {
@@ -378,5 +393,6 @@ module.exports = {
   getClient: ensureCookie,   // 兼容旧接口：预热 cookie
   search,
   streamResponse,
-  imageResponse
+  imageResponse,
+  downloadTarget
 };

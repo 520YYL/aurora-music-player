@@ -639,6 +639,87 @@
     U.toast(add ? '已加入收藏 ♥' : '已取消收藏', 'ok', 1400);
   };
 
+  /* ---------------- 在线歌曲下载（右键 → 下载到本地） ---------------- */
+
+  // 正在下载的进度提示：id -> { el, title }
+  const dlToasts = new Map();
+
+  function dlProgressText(got, total) {
+    if (!total) return U.fmtSize(got);
+    return `${U.fmtSize(got)} / ${U.fmtSize(total)}（${Math.round((got / total) * 100)}%）`;
+  }
+
+  /**
+   * 把一首在线歌曲抓到本地。
+   * 直链在哪儿解析、文件叫什么名字都由主进程决定，这里只负责提示进度和结果。
+   */
+  App.downloadOnline = async function (track) {
+    if (!track || !track.online) { U.toast('只有在线歌曲才能下载', 'err'); return; }
+    const key = track.id || track.videoId;
+    if (dlToasts.has(key)) { U.toast('这首歌正在下载中，请稍等…', '', 1600); return; }
+
+    const title = track.title || track.name || '在线歌曲';
+    const el = U.toast(`⤓ 正在解析：${title} …`, '', 30 * 60 * 1000);
+    dlToasts.set(key, { el, title });
+
+    const slim = {
+      id: track.id, videoId: track.videoId, source: track.source || 'bilibili',
+      title, artist: track.artist || '', album: track.album || '', duration: track.duration || 0
+    };
+    const hint = { title: slim.title, artist: slim.artist, duration: slim.duration };
+
+    let res;
+    try { res = await api.online.download(slim, hint); }
+    catch (err) { res = { __error: String((err && err.message) || err) }; }
+
+    dlToasts.delete(key);
+    try { el.remove(); } catch { /* 可能已经被清掉了 */ }
+
+    if (!res || res.__error || !res.ok) {
+      U.toast(`下载失败：${title} —— ${(res && res.__error) || '未知错误'}`, 'err', 4200);
+      return;
+    }
+    U.toast(`⤓ 已下载：${title}（${U.fmtSize(res.size)}）→ ${res.path}`, 'ok', 6000);
+  };
+
+  /** 右键在线曲目：播放 / 下载 / 收藏 / 打开下载文件夹 */
+  App.onlineContextMenu = function (e, track, i, list) {
+    e.preventDefault();
+    closePopover();
+    const items = [
+      ['▶ 播放', () => App.playOnlineAt(i, list)],
+      ['⤓ 下载到本地', () => App.downloadOnline(track)],
+      ['♡ 收藏 / 取消收藏', () => App.toggleOnlineFavorite(track)],
+      null,
+      ['📂 打开下载文件夹', () => api.download.openDir()],
+      ['⚙️ 修改下载位置', () => App.pickDownloadDir()]
+    ];
+    const box = ce('div', { class: 'popover', style: { position: 'fixed', left: `${Math.min(e.clientX, window.innerWidth - 240)}px`, top: `${Math.min(e.clientY, window.innerHeight - 300)}px`, minWidth: '200px', padding: '6px' } });
+    for (const it of items) {
+      if (!it) { box.appendChild(ce('div', { class: 'divider', style: { margin: '4px 0' } })); continue; }
+      const d = ce('div', { class: 'line', style: { padding: '7px 10px', borderRadius: '8px', cursor: 'pointer', fontSize: '12.5px' }, text: it[0] });
+      d.onmouseenter = () => { d.style.background = 'var(--hover)'; };
+      d.onclick = () => { closePopover(); it[1](); };
+      box.appendChild(d);
+    }
+    document.body.appendChild(box);
+    popoverEl = box;
+    setTimeout(() => document.addEventListener('pointerdown', outside, true), 0);
+  };
+
+  /** 设置页 / 右键菜单里的「下载目录」 */
+  App.pickDownloadDir = async function () {
+    const res = await api.download.pickDir();
+    if (res && res.ok === false) { U.toast('设置失败：' + (res.error || ''), 'err'); return; }
+    if (!res || res.canceled) return;
+    U.toast('下载目录已改为：' + res.dir, 'ok', 3000);
+    if (App.state.view === 'settings') App.render();
+  };
+  App.openDownloadDir = async function () {
+    const r = await api.download.openDir();
+    if (r && r.dir) U.toast('已打开：' + r.dir, 'ok', 2200);
+  };
+
   App.toggleFavorite = async function (id) {
     // 在线歌曲走单独的收藏列表，不写进本地曲库
     if (App.player.current && App.player.current.online && App.player.current.id === id) {
@@ -1792,6 +1873,14 @@
       if (App.state.view === 'plugins') App.render();
     });
     api.on('shortcut:action', ({ action }) => runAction(action));
+    // 在线歌曲下载进度（主进程 → 渲染层）
+    api.on('online:download:progress', (p) => {
+      if (!p || !p.id) return;
+      const rec = dlToasts.get(p.id);
+      if (!rec) return;
+      if (p.phase === 'done') { rec.el.textContent = `⤓ 下载完成：${rec.title}`; return; }
+      if (p.phase === 'progress') rec.el.textContent = `⤓ 正在下载：${rec.title}  ${dlProgressText(p.got, p.total)}`;
+    });
     // 浮层/迷你窗口刚加载好时主动索要一次，避免开窗瞬间的空白
     api.on('overlay:request-sync', () => syncOverlays());
     window.addEventListener('beforeunload', () => {

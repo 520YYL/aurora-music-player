@@ -489,7 +489,8 @@
 
     const ids = [
       ['appearance', '🎨 外观与背景'], ['playback', '▶ 播放与过渡'],
-      ['shortcuts', '⌨️ 快捷键'], ['library', '📁 曲库'], ['stats', '📊 统计'], ['data', '💾 数据与关于']
+      ['shortcuts', '⌨️ 快捷键'], ['library', '📁 曲库'], ['stats', '📊 统计'],
+      ['download', '⤓ 在线下载'], ['data', '💾 数据与关于']
     ];
     for (const [id, label] of ids) {
       nav.appendChild(ce('div', { class: 'nav-item', text: label, onclick: () => { const el = sections.querySelector(`[data-sec="${id}"]`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }));
@@ -650,6 +651,19 @@
       ce('button', { class: 'btn sm danger', text: '🗑 重置', onclick: () => app.resetStats() })
     ]));
     sections.appendChild(secSt);
+
+    /* ---------- 在线下载 ---------- */
+    const secDl = section('在线下载', '在「在线音乐」里右键任意一首歌 →「下载到本地」');
+    secDl.dataset.sec = 'download';
+    const dlDir = (s.download && s.download.dir) || '';
+    secDl.appendChild(setRow('下载目录', dlDir || '未设置，默认存到「音乐」文件夹下的 Aurora 下载', [
+      ce('button', { class: 'btn sm primary', text: '📁 选择文件夹', onclick: () => app.pickDownloadDir() }),
+      ce('button', { class: 'btn sm', text: '📂 打开', onclick: () => app.openDownloadDir() }),
+      ce('button', { class: 'btn sm', text: '↺ 默认', onclick: () => app.saveSettings({ download: { ...s.download, dir: '' } }) })
+    ]));
+    secDl.appendChild(ce('div', { class: 'muted', style: { fontSize: '12.5px', lineHeight: '1.9' } },
+      [ce('div', { text: '下载的是公开接口解析出来的音频流（文件名自动写成「歌手 - 歌名」）；下载完可以在「曲库」里扫描一下这个文件夹，就能进曲库播放。' })]));
+    sections.appendChild(secDl);
 
     /* ---------- 数据与关于 ---------- */
     const secD = section('数据与关于', '存储位置、缓存与版本信息');

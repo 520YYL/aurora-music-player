@@ -129,6 +129,12 @@
       showDuration: true
     },
 
+    // 在线歌曲下载（右键在线搜索结果 →「下载到本地」）
+    // dir 留空 = 系统「音乐」文件夹下的「Aurora 下载」
+    download: {
+      dir: ''
+    },
+
     // 听歌时长统计
     stats: {
       enabled: true,

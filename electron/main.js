@@ -15,6 +15,7 @@ const { findLyrics } = require('./lyrics-finder');
 const onlineLyrics = require('./lyrics-online');
 const online = require('./online');
 const aggregator = require('./aggregator');
+const downloader = require('./downloader');
 const DEFAULTS = require('../src/js/defaults.js');
 const PRESETS = require('../src/js/presets.js');
 
@@ -994,6 +995,40 @@ function createDesktopShortcut(opts2 = {}) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 在线歌曲下载                                                        */
+/* ------------------------------------------------------------------ */
+/** 下载目录：设置里没填就用「音乐 / Aurora 下载」 */
+function downloadsDir() {
+  const custom = String(settingsStore.get('download.dir', '') || '').trim();
+  if (custom) return custom;
+  let music = '';
+  try { music = app.getPath('music'); } catch { music = ''; }
+  if (!music) { try { music = app.getPath('downloads'); } catch { music = DATA_DIR; } }
+  return path.join(music, 'Aurora 下载');
+}
+
+/** 解析直链 → 流式落盘，过程中广播进度 */
+async function downloadOnlineTrack(evt, track, hint) {
+  const t = track || {};
+  const src = t.source && t.source !== 'bilibili' ? t.source : 'bilibili';
+  if (!t.videoId) throw new Error('这首曲目缺少下载所需的 id');
+
+  const target = src === 'bilibili'
+    ? await online.downloadTarget(t.videoId)
+    : await aggregator.downloadTarget(src, t.videoId, {
+        title: (hint && hint.title) || t.title || '',
+        artist: (hint && hint.artist) || t.artist || '',
+        duration: Number((hint && hint.duration) || t.duration || 0) || 0
+      });
+
+  const res = await downloader.downloadToFile(target, t, downloadsDir(), (got, total) => {
+    broadcast('online:download:progress', { id: t.id, phase: 'progress', got, total });
+  });
+  broadcast('online:download:progress', { id: t.id, phase: 'done', got: res.size, total: res.size, path: res.path });
+  return res;
+}
+
+/* ------------------------------------------------------------------ */
 /* IPC                                                                 */
 /* ------------------------------------------------------------------ */
 function setupIpc() {
@@ -1011,6 +1046,31 @@ function setupIpc() {
     onlineFavStore.set('items', Array.isArray(list) ? list : []);
     onlineFavStore.save();
     return { ok: true, count: onlineFavStore.get('items', []).length };
+  });
+  // 右键「下载到本地」：解析直链 → 落盘到设置的下载目录
+  handle('online:download', (evt, track, hint) => downloadOnlineTrack(evt, track, hint));
+  handle('download:dir', () => ({
+    dir: downloadsDir(),
+    custom: String(settingsStore.get('download.dir', '') || '')
+  }));
+  handle('download:pickDir', async (evt) => {
+    const cur = downloadsDir();
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: '选择下载文件夹',
+      defaultPath: fs.existsSync(cur) ? cur : undefined,
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (res.canceled || !res.filePaths.length) return { canceled: true };
+    settingsStore.set('download.dir', res.filePaths[0]);
+    settingsStore.save();
+    broadcast('settings:changed', { download: settingsStore.get('download') }, evt.sender.id);
+    return { canceled: false, dir: res.filePaths[0] };
+  });
+  handle('download:openDir', async () => {
+    const dir = downloadsDir();
+    await fsp.mkdir(dir, { recursive: true });
+    await shell.openPath(dir);
+    return { ok: true, dir };
   });
 
   handle('app:info', () => ({

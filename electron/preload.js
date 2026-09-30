@@ -114,7 +114,16 @@ contextBridge.exposeInMainWorld('aurora', {
     thumbRef: (source, id) => (source && id ? `aurora://local/thumb?s=${encodeURIComponent(source)}&i=${encodeURIComponent(id)}` : ''),
     // 在线收藏（存在 userData/online-favorites.json）
     favorites: () => invoke('online:favorites'),
-    saveFavorites: (list) => invoke('online:setFavorites', list)
+    saveFavorites: (list) => invoke('online:setFavorites', list),
+    // 下载到本地（目录在设置页里改）
+    download: (track, hint) => invoke('online:download', track, hint),
+    onDownload: (cb) => on('online:download:progress', cb)
+  },
+  // 在线歌曲的下载目录
+  download: {
+    dir: () => invoke('download:dir'),
+    pickDir: () => invoke('download:pickDir'),
+    openDir: () => invoke('download:openDir')
   },
   debug: {
     windows: () => invoke('debug:windows')
