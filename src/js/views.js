@@ -86,24 +86,32 @@
 
     const cols = '34px 34px minmax(160px, 2.6fr) minmax(110px, 1.5fr) 62px 60px 108px 84px 78px';
 
-    /** 「我的收藏」页：本地收藏列表下面再接一段「在线收藏」（哔哩哔哩） */
+    /** 「我的收藏」页：本地收藏列表下面再接一段「在线收藏」（哔哩哔哩 / 酷我 / 网易云） */
     function appendOnlineFavs() {
       if (!onlineFavs.length) return;
+      // 收藏可能来自多个音源，按来源把数量汇总一下
+      const bySrc = {};
+      for (const t2 of onlineFavs) {
+        const k = t2.sourceName || '在线';
+        bySrc[k] = (bySrc[k] || 0) + 1;
+      }
+      const detail = Object.keys(bySrc).map((k) => `${k} ${bySrc[k]}`).join(' · ');
       body.appendChild(ce('div', {
         style: {
           marginTop: '18px', padding: '10px 4px 8px', fontSize: '12px',
           fontWeight: '600', opacity: '.72', borderTop: '1px solid rgba(255,255,255,.08)'
         },
-        text: `在线收藏 · ${onlineFavs.length} 首（来自哔哩哔哩）`
+        text: `在线收藏 · ${onlineFavs.length} 首（${detail}）`
       }));
       const fh = ce('div', { class: 'track-head', style: { '--cols': cols } });
-      for (const label of ['#', '', '标题', 'UP主', '格式', '时长', '来源', '', '操作']) {
+      // 在线收藏混了多个音源（哔哩哔哩这一列的字段其实是 UP主），用中性表头
+      for (const label of ['#', '', '标题', '专辑 / UP主', '格式', '时长', '来源', '', '操作']) {
         fh.appendChild(ce('div', { text: label }));
       }
       body.appendChild(fh);
       const box = ce('div', { class: 'track-list' });
       const frag2 = document.createDocumentFragment();
-      onlineFavs.forEach((t2, i) => frag2.appendChild(onlineRow(app, t2, i, cols, onlineFavs)));
+      onlineFavs.forEach((t2, i) => frag2.appendChild(onlineRow(app, t2, i, cols, onlineFavs, '专辑 / UP主')));
       box.appendChild(frag2);
       body.appendChild(box);
     }
@@ -277,6 +285,15 @@
         ce('button', { class: 'btn sm', text: '✏️ 编辑歌词', onclick: () => app.editLyrics() }),
         ce('button', { class: 'btn sm', text: app.lyrics.sourcePath ? '🔄 重新载入歌词' : '🔍 查找歌词', onclick: () => app.reloadLyrics(true) })
       ];
+      // 聚合音源（酷我 / 网易云）没有可跳转的网页，用一个「在网页中搜索」代替
+      if (t.online && t.source !== 'bilibili') {
+        const q = encodeURIComponent(`${t.title || ''} ${t.artist || ''}`.trim());
+        const site = t.source === 'kuwo' ? 'https://www.kuwo.cn/search/list?key=' : 'https://music.163.com/#/search/m/?s=';
+        opsList.splice(1, 0, ce('button', {
+          class: 'btn sm', text: `🌐 在${t.sourceName || '网页'}中查看`,
+          onclick: () => window.aurora.app.openExternal(site + q)
+        }));
+      }
       const ops = ce('div', { class: 'row', style: { marginTop: '12px', gap: '8px', flexWrap: 'wrap' } }, opsList);
       info.appendChild(ops);
     }
@@ -295,9 +312,9 @@
   }
 
   /* ================================================================== */
-  /* 在线音乐视图（哔哩哔哩公开接口）                                      */
+  /* 在线音乐视图（两栏：哔哩哔哩音源 / 所有音乐）                          */
   /* ================================================================== */
-  function onlineRow(app, t, i, cols, list) {
+  function onlineRow(app, t, i, cols, list, albumLabel) {
     const playing = app.player.current && app.player.current.id === t.id;
     const el = ce('div', {
       class: `track-row${playing ? ' playing' : ''}`,
@@ -316,12 +333,17 @@
         ce('div', { class: 't-sub', text: t.artist })
       ])
     ]));
-    el.appendChild(ce('div', { class: 't-cell', text: t.album || '—', title: t.album || '' }));
+    el.appendChild(ce('div', {
+      class: 't-cell',
+      text: t.album || '—',
+      title: t.album ? `${albumLabel}：${t.album}` : ''
+    }));
     const fmtCell = ce('div', { class: 't-cell' });
     fmtCell.appendChild(fmtBadge(t));
     el.appendChild(fmtCell);
-    el.appendChild(ce('div', { class: 't-cell', text: U.fmtTime((t.duration || 0) / 1000) }));
-    el.appendChild(ce('div', { class: 't-cell', text: '在线' }));
+    // 聚合音源有些结果拿不到时长，显示成「—」而不是 0:00
+    el.appendChild(ce('div', { class: 't-cell', text: t.duration ? U.fmtTime(t.duration / 1000) : '—' }));
+    el.appendChild(ce('div', { class: 't-cell', text: t.sourceName || '在线' }));
     el.appendChild(ce('div', { class: 't-cell' }));
     el.appendChild(ce('div', { class: 't-actions' }, [
       ce('button', {
@@ -338,18 +360,51 @@
     return el;
   }
 
-  function online(app) {
-    const st = app.state.online || { query: '', loading: false, error: '', tracks: [] };
-    const wrap = ce('div', { class: 'col', style: { height: '100%' } });
+  /** 聚合音源每个 provider 的响应情况，例如「酷我音乐 32 首 · 网易云音乐 暂时不可用」 */
+  function providerStatus(st) {
+    const list = Array.isArray(st.providers) ? st.providers : [];
+    if (!list.length) return null;
+    const parts = list.map((p) => (p.ok ? `${p.name} ${p.count} 首` : `${p.name} 暂时不可用`));
+    return ce('span', {
+      class: 'muted',
+      style: { fontSize: '12px' },
+      text: parts.join(' · '),
+      title: list.filter((p) => !p.ok && p.error).map((p) => `${p.name}：${p.error}`).join('\n')
+    });
+  }
 
-    const sub = st.error ? '搜索出错了'
+  function online(app) {
+    const tab = app.state.onlineTab === 'all' ? 'all' : 'bili';
+    const info = app.onlineTabInfo(tab);
+    const st = app.onlineState(tab) || { query: '', loading: false, error: '', tracks: [], providers: [] };
+    const isAll = tab === 'all';
+    const albumLabel = isAll ? '专辑' : 'UP主';
+
+    const wrap = ce('div', { class: 'col', style: { height: '100%' } });
+    const status = st.error ? '搜索出错了'
       : st.loading ? '正在搜索…'
         : st.query ? `“${st.query}” · ${st.tracks.length} 首`
           : '在上方搜索框输入歌名或歌手，例如：周杰伦 晴天';
     wrap.appendChild(ce('div', { class: 'view-head' }, [
-      ce('div', {}, [ce('h1', { text: '在线音乐' }), ce('div', { class: 'sub', text: sub })])
+      ce('div', {}, [ce('h1', { text: '在线音乐' }), ce('div', { class: 'sub', text: status })])
     ]));
 
+    // ── 第一栏：音源切换 ──────────────────────────────────────────────
+    const tabs = ce('div', { class: 'toolbar' });
+    for (const t of app.ONLINE_TABS) {
+      const active = t.key === tab;
+      tabs.appendChild(ce('button', {
+        class: `btn sm${active ? ' primary' : ''}`,
+        text: `${t.icon} ${t.label}`,
+        title: t.key === 'all' ? '聚合音源（酷我音乐 / 网易云音乐），不包含哔哩哔哩' : '仅搜索哔哩哔哩',
+        onclick: () => app.setOnlineTab(t.key)
+      }));
+    }
+    tabs.appendChild(ce('div', { class: 'sep' }));
+    tabs.appendChild(ce('span', { class: 'muted', style: { fontSize: '12px' }, text: info.hint }));
+    wrap.appendChild(tabs);
+
+    // ── 第二栏：操作 ─────────────────────────────────────────────────
     const tb = ce('div', { class: 'toolbar' });
     tb.appendChild(ce('button', {
       class: 'btn primary sm', html: '🔍 搜索在线音乐',
@@ -358,8 +413,10 @@
     if (st.tracks.length) {
       tb.appendChild(ce('button', { class: 'btn sm', html: '▶ 播放全部结果', onclick: () => app.playOnlineAt(0, st.tracks) }));
     }
-    tb.appendChild(ce('div', { class: 'sep' }));
-    tb.appendChild(ce('span', { class: 'muted', style: { fontSize: '12px' }, text: '来自哔哩哔哩 · 无需 API Key · 播放时实时解析音频流' }));
+    if (isAll) {
+      const ps = providerStatus(st);
+      if (ps) { tb.appendChild(ce('div', { class: 'sep' })); tb.appendChild(ps); }
+    }
     wrap.appendChild(tb);
 
     const body = ce('div', { class: 'view-body' });
@@ -378,29 +435,35 @@
         ce('div', { class: 'big', text: '⚠️' }),
         ce('h3', { text: '在线搜索失败' }),
         ce('p', { text: st.error }),
-        ce('button', { class: 'btn primary', text: '重试', onclick: () => app.onlineSearch(st.query) })
+        ce('button', { class: 'btn primary', text: '重试', onclick: () => app.onlineSearch(st.query, tab) })
       ]));
       return wrap;
     }
     if (!st.tracks.length) {
       body.appendChild(ce('div', { class: 'empty' }, [
-        ce('div', { class: 'big', text: '🌐' }),
-        ce('h3', { text: st.query ? '没有找到匹配的歌曲' : '搜索在线音乐' }),
-        ce('p', { html: st.query ? '换个关键词试试，或清空搜索框重新输入。' : '在顶部搜索框输入关键词（例如「周杰伦 晴天」）后按回车，即可搜索在线歌曲。<br>结果会显示歌名、歌手、UP主、封面和时长，点击即可播放，播放时自动按需解析音频流。' })
+        ce('div', { class: 'big', text: isAll ? '🌐' : '📺' }),
+        ce('h3', { text: st.query ? '没有找到匹配的歌曲' : `搜索${info.label}` }),
+        ce('p', {
+          html: st.query
+            ? '换个关键词试试，或清空搜索框重新输入。'
+            : (isAll
+              ? '在顶部搜索框输入关键词（例如「周杰伦 晴天」）后按回车，会同时搜索酷我音乐和网易云音乐。<br>结果会显示歌名、歌手、专辑、封面和时长，点击即可播放，播放时自动按需解析音频流。'
+              : '在顶部搜索框输入关键词（例如「周杰伦 晴天」）后按回车，即可搜索哔哩哔哩上的音频。<br>结果会显示歌名、歌手、UP主、封面和时长，点击即可播放，播放时自动按需解析音频流。')
+        })
       ]));
       return wrap;
     }
 
     const cols = '34px 34px minmax(160px, 2.6fr) minmax(110px, 1.5fr) 62px 60px 108px 84px 78px';
     const head = ce('div', { class: 'track-head', style: { '--cols': cols } });
-    for (const label of ['#', '', '标题', 'UP主', '格式', '时长', '来源', '', '操作']) {
+    for (const label of ['#', '', '标题', albumLabel, '格式', '时长', '来源', '', '操作']) {
       head.appendChild(ce('div', { text: label }));
     }
     body.appendChild(head);
 
     const listEl = ce('div', { class: 'track-list' });
     const frag = document.createDocumentFragment();
-    st.tracks.forEach((t, i) => frag.appendChild(onlineRow(app, t, i, cols, st.tracks)));
+    st.tracks.forEach((t, i) => frag.appendChild(onlineRow(app, t, i, cols, st.tracks, albumLabel)));
     listEl.appendChild(frag);
     body.appendChild(listEl);
     return wrap;

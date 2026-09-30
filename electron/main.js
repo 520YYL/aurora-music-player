@@ -13,6 +13,7 @@ const { JsonStore, deepMerge, deepClone } = require('./store');
 const scanner = require('./scanner');
 const { findLyrics } = require('./lyrics-finder');
 const online = require('./online');
+const aggregator = require('./aggregator');
 const DEFAULTS = require('../src/js/defaults.js');
 const PRESETS = require('../src/js/presets.js');
 
@@ -217,20 +218,45 @@ async function handleAuroraRequest(req) {
       return fileResponse(target, req);
     }
     // 在线音乐：音频流（支持 Range，可直接喂给 <audio>）
+    //   ?v=<id>              哔哩哔哩（默认）
+    //   ?v=<id>&s=<provider>  聚合音源（kuwo / netease）
     if (kind === 'stream') {
       const v = params.get('v');
-      if (!v || !/^[A-Za-z0-9_-]{6,20}$/.test(v)) return new Response('Bad video id', { status: 400 });
+      const src = params.get('s') || 'bilibili';
+      if (!v) return new Response('Bad video id', { status: 400 });
       try {
-        return await online.streamResponse(v, req);
+        if (src === 'bilibili') {
+          if (!/^[A-Za-z0-9_-]{6,20}$/.test(v)) return new Response('Bad video id', { status: 400 });
+          return await online.streamResponse(v, req);
+        }
+        if (!aggregator.PROVIDER_NAMES[src] || !/^[A-Za-z0-9_-]{1,40}$/.test(v)) {
+          return new Response('Bad source', { status: 400 });
+        }
+        return await aggregator.streamResponse(src, v, req);
       } catch (err) {
         const msg = err && err.message ? err.message : String(err);
-        trace('proto stream FAIL ' + v + ' ' + msg);
+        trace('proto stream FAIL ' + src + '/' + v + ' ' + msg);
         return new Response('在线音频不可用：' + msg, { status: 502 });
       }
     }
     // 在线音乐：封面代理（避免放开 CSP 去直连外链图）
+    //   ?u=<图片直链>                哔哩哔哩 / 酷我（地址可直接拼出来）
+    //   ?s=netease&i=<pic_id>        网易云（真实地址要先解析一次）
     if (kind === 'thumb') {
       const u = params.get('u');
+      const ts = params.get('s');
+      const ti = params.get('i');
+      if (ts && ti) {
+        if (!aggregator.PROVIDER_NAMES[ts] || !/^[^&?#\s]{1,80}$/.test(ti)) {
+          return new Response('Bad thumb ref', { status: 400 });
+        }
+        try {
+          return await aggregator.imageResponse(ts, ti);
+        } catch (err) {
+          trace('proto thumb FAIL ' + ts + '/' + ti + ' ' + (err && err.message ? err.message : err));
+          return new Response('封面不可用', { status: 502 });
+        }
+      }
       if (!u) return new Response('Missing url', { status: 400 });
       try {
         return await online.imageResponse(u);
@@ -927,6 +953,8 @@ function setupIpc() {
 
   // 在线音乐（哔哩哔哩公开接口）：只暴露搜索，音频/封面走 aurora:// 协议
   handle('online:search', (evt, query, limit) => online.search(query, limit));
+  // 「所有音乐」分栏：聚合音源（酷我 / 网易云），并发查询、各自降级
+  handle('online:searchAll', (evt, query, limit) => aggregator.search(query, limit));
   handle('online:favorites', () => onlineFavStore.get('items', []));
   handle('online:setFavorites', (evt, list) => {
     onlineFavStore.set('items', Array.isArray(list) ? list : []);

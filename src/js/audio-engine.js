@@ -182,12 +182,13 @@
       if (!deck) return null;
       deck.track = track;
       // 本地文件走 aurora://local/media；在线曲目（path 为空）走 aurora://local/stream，
-      // 由主进程实时解析哔哩哔哩音频直链并按 Range 透传
+      // 由主进程实时解析直链并按 Range 透传。
+      // track.source 决定走哪条通道：'bilibili'（默认）/ 'kuwo' / 'netease'
       let url = '';
       if (track && track.path) {
         url = window.aurora.app.mediaUrl(track.path);
       } else if (track && track.online && track.videoId && window.aurora.online) {
-        url = window.aurora.online.streamUrl(track.videoId);
+        url = window.aurora.online.streamUrl(track.videoId, track.source);
       }
       if (deck.el.src !== url) {
         deck.el.src = url;

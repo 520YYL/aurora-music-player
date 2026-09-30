@@ -31,8 +31,11 @@
       appInfo: null,
       coverStats: null,
       settings: null,
-      // 在线音乐（哔哩哔哩）搜索状态 —— 与本地曲库完全隔离，不污染 state.tracks
-      online: { query: '', loading: false, error: '', tracks: [] },
+      // 在线音乐：两个分栏各自独立的状态，与本地曲库完全隔离，不污染 state.tracks
+      //   bili = 哔哩哔哩音源；all = 聚合音源（酷我 / 网易云）
+      onlineTab: 'bili',
+      online: { query: '', loading: false, error: '', tracks: [], providers: [] },
+      onlineAll: { query: '', loading: false, error: '', tracks: [], providers: [] },
       // 在线收藏：同样是独立列表，磁盘上存 userData/online-favorites.json
       onlineFavs: []
     }
@@ -48,10 +51,15 @@
     const lib = await api.library.get();
     App.state.tracks = lib.tracks || [];
     App.state.playlists = await api.playlists.get();
-    // 在线收藏：读失败不影响启动
+    // 在线收藏：读失败不影响启动。1.1.0 之前的记录没有 source，按哔哩哔哩补齐
     try {
       const favs = await api.online.favorites();
-      App.state.onlineFavs = Array.isArray(favs) ? favs.filter((t) => t && t.videoId) : [];
+      App.state.onlineFavs = Array.isArray(favs)
+        ? favs.filter((t) => t && t.videoId).map((t) => Object.assign({
+          online: true, source: 'bilibili', sourceName: '哔哩哔哩',
+          path: null, hasCover: false, favorite: true
+        }, t))
+        : [];
     } catch { App.state.onlineFavs = []; }
     App.settings.__dataDir = App.state.appInfo.dataDir;
 
@@ -447,56 +455,99 @@
 
   /* ------------------------------ 在线音乐 ------------------------------ */
   /**
+   * 在线音乐有两个分栏：
+   *   bili —— 哔哩哔哩音源（electron/online.js）
+   *   all  —— 所有音乐（聚合音源：酷我 / 网易云，electron/aggregator.js）
+   * 各自维护搜索状态，切换分栏不会互相清空。
+   */
+  App.ONLINE_TABS = [
+    { key: 'bili', label: '哔哩哔哩音源', icon: '📺', hint: '来自哔哩哔哩 · 无需 API Key · 播放时实时解析音频流' },
+    { key: 'all', label: '所有音乐', icon: '🌐', hint: '来自酷我音乐 / 网易云音乐 · 不含哔哩哔哩 · 无需 API Key' }
+  ];
+
+  /** 当前分栏对应的搜索状态 */
+  App.onlineState = function (tab) {
+    const key = tab || App.state.onlineTab;
+    return key === 'all' ? App.state.onlineAll : App.state.online;
+  };
+  App.onlineTabInfo = function (tab) {
+    const key = tab || App.state.onlineTab;
+    return App.ONLINE_TABS.find((t) => t.key === key) || App.ONLINE_TABS[0];
+  };
+  App.onlineTabLabel = function (tab) {
+    return App.onlineTabInfo(tab).label;
+  };
+
+  /** 切换分栏；两个分栏各自记住自己的搜索结果和关键词 */
+  App.setOnlineTab = function (tab) {
+    const key = tab === 'all' ? 'all' : 'bili';
+    if (App.state.onlineTab === key) return;
+    App.state.onlineTab = key;
+    const st = App.onlineState(key);
+    // 搜过但没结果的失败状态，切回来时重试一次，省得用户手动点
+    if (App.state.view === 'online') App.render();
+    if (st.query && st.error && !st.loading) App.onlineSearch(st.query);
+  };
+
+  /**
    * 把主进程返回的搜索结果转成播放器能吃的曲目对象。
    * 关键点：path 为 null + online:true —— audio-engine.setSource 会据此改用
    * aurora://local/stream，其余（播放/暂停/上下首/音量/进度）全部复用现有逻辑。
    */
   function onlineTrackFrom(item) {
-    const id = 'yt_' + item.videoId;
+    const src = item.source || 'bilibili';
+    // 哔哩哔哩沿用历史 id 前缀 yt_，这样旧版本存下来的在线收藏还能对上号
+    const id = item.id || (src === 'bilibili' ? 'yt_' + item.videoId : 'on_' + src + '_' + item.videoId);
     return {
       id,
       online: true,
       videoId: item.videoId,
+      source: src,
+      sourceName: item.sourceName || (src === 'bilibili' ? '哔哩哔哩' : src),
       title: item.title,
       artist: item.artist,
       album: item.album,
-      duration: item.duration, // 毫秒，和本地曲目一致
-      format: '在线',
+      duration: item.duration, // 毫秒，和本地曲目一致（聚合音源拿不到时长时为 0）
+      format: item.format || '在线',
       path: null,
       hasCover: false,
       favorite: App.isOnlineFav(id),
-      coverUrl: api.online.thumbUrl(item.thumbnail)
+      coverUrl: item.thumbRef
+        ? api.online.thumbRef(item.thumbRef.source, item.thumbRef.id)
+        : api.online.thumbUrl(item.thumbnail)
     };
   }
 
-  /** 播放第 i 首在线歌曲；list 省略时用当前搜索结果当队列 */
+  /** 播放第 i 首在线歌曲；list 省略时用当前分栏的搜索结果当队列 */
   App.playOnlineAt = function (i, list) {
-    const queue = Array.isArray(list) && list.length ? list : App.state.online.tracks;
+    const queue = Array.isArray(list) && list.length ? list : App.onlineState().tracks;
     if (!queue.length) return;
     const idx = Math.max(0, Math.min(queue.length - 1, Number(i) || 0));
     App.player.setQueue(queue, idx);
   };
 
-  /** 搜索在线音乐（结果只放在 state.online，不写进 state.tracks，避免污染本地曲库） */
-  App.onlineSearch = async function (query) {
-    const st = App.state.online;
+  /** 搜索在线音乐（结果只放在 state.online / state.onlineAll，不写进 state.tracks） */
+  App.onlineSearch = async function (query, tab) {
+    const key = tab === 'bili' || tab === 'all' ? tab : App.state.onlineTab;
+    const st = App.onlineState(key);
     const q = String(query == null ? '' : query).trim();
     if (!q) {
-      st.query = ''; st.loading = false; st.error = ''; st.tracks = [];
+      st.query = ''; st.loading = false; st.error = ''; st.tracks = []; st.providers = [];
       if (App.state.view === 'online') App.render();
       return;
     }
-    st.query = q; st.loading = true; st.error = ''; st.tracks = [];
+    st.query = q; st.loading = true; st.error = ''; st.tracks = []; st.providers = [];
+    if (key !== App.state.onlineTab) App.state.onlineTab = key;
     if (App.state.view !== 'online') App.setView('online'); else App.render();
 
     let res;
     try {
-      res = await api.online.search(q, 40);
+      res = key === 'all' ? await api.online.searchAll(q, 40) : await api.online.search(q, 40);
     } catch (err) {
       res = { __error: err && err.message ? err.message : String(err) };
     }
-    // 期间用户又搜了别的关键词，丢弃这次的结果
-    if (App.state.online.query !== q) return;
+    // 期间用户又搜了别的关键词（或换了分栏），丢弃这次的结果
+    if (st.query !== q) return;
     st.loading = false;
     if (!res || res.__error) {
       st.error = (res && res.__error) || '搜索失败';
@@ -504,8 +555,15 @@
     } else {
       st.error = '';
       st.tracks = (res.items || []).filter((x) => x && x.videoId).map(onlineTrackFrom);
+      st.providers = Array.isArray(res.providers) ? res.providers : [];
     }
-    if (App.state.view === 'online') App.render();
+    if (App.state.view === 'online' && App.state.onlineTab === key) App.render();
+  };
+
+  /** 当前分栏里有结果时就重新搜一次（切分栏 / 点重试按钮都用它） */
+  App.onlineRetry = function () {
+    const st = App.onlineState();
+    App.onlineSearch(st.query);
   };
 
   /* ---------------------------- 在线收藏 ---------------------------- */
@@ -516,10 +574,13 @@
 
   /** 只保留渲染与播放需要的字段，避免把整个搜索结果塞进磁盘 */
   function slimOnlineTrack(t) {
+    const src = t.source || 'bilibili';
     return {
-      id: t.id,
+      id: t.id || (src === 'bilibili' ? 'yt_' + t.videoId : 'on_' + src + '_' + t.videoId),
       online: true,
       videoId: t.videoId,
+      source: src,
+      sourceName: t.sourceName || (src === 'bilibili' ? '哔哩哔哩' : src),
       title: t.title,
       artist: t.artist,
       album: t.album,
@@ -539,15 +600,18 @@
    */
   App.toggleOnlineFavorite = async function (track) {
     if (!track || !track.videoId) return;
-    const id = track.id || ('yt_' + track.videoId);
+    const src = track.source || 'bilibili';
+    const id = track.id || (src === 'bilibili' ? 'yt_' + track.videoId : 'on_' + src + '_' + track.videoId);
     const idx = App.state.onlineFavs.findIndex((x) => x.id === id);
     const add = idx < 0;
-    if (add) App.state.onlineFavs.unshift(slimOnlineTrack(Object.assign({}, track, { id })));
+    if (add) App.state.onlineFavs.unshift(slimOnlineTrack(Object.assign({}, track, { id, source: src })));
     else App.state.onlineFavs.splice(idx, 1);
     track.favorite = add;
 
-    // 同一首歌可能同时出现在搜索结果和收藏列表里，一起同步
-    for (const x of App.state.online.tracks) if (x.id === id) x.favorite = add;
+    // 同一首歌可能同时出现在两个分栏的搜索结果和收藏列表里，一起同步
+    for (const st of [App.state.online, App.state.onlineAll]) {
+      for (const x of st.tracks) if (x.id === id) x.favorite = add;
+    }
     if (App.player.current && App.player.current.id === id) {
       App.player.current.favorite = add;
       updateFavButton();
@@ -864,7 +928,7 @@
           // 搜索框里已经有内容就直接搜一次，省得用户再敲一遍
           const box = $('#search');
           const q = box ? box.value.trim() : '';
-          if (q && q !== App.state.online.query) App.onlineSearch(q);
+          if (q && q !== App.onlineState().query) App.onlineSearch(q);
           return;
         }
         App.setView(view);

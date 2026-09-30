@@ -92,11 +92,19 @@ contextBridge.exposeInMainWorld('aurora', {
   cover: {
     pickFor: (id) => invoke('cover:pickFor', id)
   },
-  // 在线音乐（哔哩哔哩公开接口，无需 API Key / 无需服务器）
+  // 在线音乐（哔哩哔哩 / 聚合音源，均为公开接口，无需 API Key / 无需服务器）
   online: {
     search: (query, limit) => invoke('online:search', query, limit),
-    streamUrl: (videoId) => `aurora://local/stream?v=${encodeURIComponent(videoId)}`,
+    // 「所有音乐」分栏：酷我 + 网易云 聚合搜索
+    searchAll: (query, limit) => invoke('online:searchAll', query, limit),
+    // source 省略或为 'bilibili' 时走哔哩哔哩通道
+    streamUrl: (videoId, source) => {
+      const s = source && source !== 'bilibili' ? `&s=${encodeURIComponent(source)}` : '';
+      return `aurora://local/stream?v=${encodeURIComponent(videoId)}${s}`;
+    },
     thumbUrl: (u) => (u ? `aurora://local/thumb?u=${encodeURIComponent(u)}` : ''),
+    // 封面地址无法直接拼出来的音源（网易云），交给主进程按 id 解析
+    thumbRef: (source, id) => (source && id ? `aurora://local/thumb?s=${encodeURIComponent(source)}&i=${encodeURIComponent(id)}` : ''),
     // 在线收藏（存在 userData/online-favorites.json）
     favorites: () => invoke('online:favorites'),
     saveFavorites: (list) => invoke('online:setFavorites', list)
