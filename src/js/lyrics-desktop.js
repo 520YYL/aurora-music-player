@@ -6,7 +6,8 @@
  *   —— 注意不要退回「一个字一个 <span>」的做法：那样一行要几十个节点，
  *      每帧都要重排，之前就踩过「字幕一卡一卡」的坑。
  * 性能：外观设置和歌词正文各自比较指纹，只有真变了才重建 DOM；
- *      窗口高度只在数值真的变了才通知主进程（透明窗频繁 setSize 会明显卡顿）。
+ *      窗口尺寸**只跟设置有关、固定不变**：以前按每句歌词的实际宽度贴紧内容，
+ *      结果换一句窗口就变一次大小（长句撑开、短句缩回），现在只在设置或面板变化时重算。
  */
 (function () {
   'use strict';
@@ -282,7 +283,6 @@
           preludeText = wanted;
           el.nxt.textContent = wanted;
           el.nxt.style.fontFamily = fontFor(lines[0].lang || lines[0].isCJK);
-          scheduleResize();
         }
         el.nxt.classList.remove('hidden');
       } else el.nxt.classList.add('hidden');
@@ -314,8 +314,6 @@
         el.nxt.classList.remove('hidden');
         el.nxt.style.fontFamily = fontFor(nx.lang || nx.isCJK);
       } else el.nxt.classList.add('hidden');
-
-      scheduleResize();
     }
 
     paintProgress();
@@ -334,31 +332,41 @@
   }
 
   /* ================================================================== */
-  /* 窗口尺寸：宽高都贴紧内容                                              */
+  /* 窗口尺寸：固定大小                                                    */
   /* ================================================================== */
+  // 以前宽高都「贴紧内容」：拿当前这句歌词的实际宽度去定窗口宽度，于是每换一句
+  // 窗口就跟着变一次 —— 长句把框撑开、短句又缩回去，看起来就是「字幕框一直在变大小」。
+  // 现在尺寸只由设置决定（字号 / 封面大小 / 行距 / 显示项），跟唱到哪一句、
+  // 跟换不换歌都无关；歌词超过宽度时在框内折行。
   const MIN_W = 330;
   const MIN_H = 110;
-  const MAX_H = 560;
+  const MAX_H = 620;
   const MAX_W = 1300;
-  // 歌词正文的宽度上限：超过就让长句折行，而不是把窗口一路撑到满屏。
-  // 这是「窗口别挡住桌面」和「长句别折成三行」之间的折中。
-  const MAX_TEXT_W = 760;
+  // 参考正文宽度：按「这么多个全角字」估一个固定宽度，与歌词内容无关。
+  // 14 个字在 26px 字号下约 364px；配合下面给当前句预留两行，
+  // 一个框大约能容下 28 个汉字，常见歌词整句都不用折。
+  const REF_CJK = 14;
   // 正文右侧留一点余量，否则最后一个字会贴着窗口边缘
   const TEXT_PAD = 6;
+  // 当前句最多按两行预留（宽度固定后长句必然折行）
+  const CUR_LINES = 2;
   // 面板展开时的高度上限：面板自身有 max-height，这里只是别让它顶到屏幕
   const MAX_PANEL_H = 620;
 
   let resizeTimer = null;
 
+  // 只在「设置变了」或「面板开关」时排队重算尺寸；换歌词不再触发（这是修 bug 的关键）
   function scheduleResize() {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(fitWindow, 180);
+    resizeTimer = setTimeout(applyWindowSize, 60);
   }
 
   /**
    * 量出一段文字的自然宽度（不换行）。
+   * 只用来量一个固定的参考字串（'测' × REF_CJK），结果与当前歌词无关，
+   * 所以不会因为换句而改变窗口尺寸。
    * 不能直接读 #lyr.scrollWidth：它受当前窗口宽度约束，窗口窄的时候文字已经换行了，
-   * 量出来的是「当前布局宽度」而不是自然宽度，于是窗口永远缩不回去。
+   * 量出来的是「当前布局宽度」而不是自然宽度。
    * 这里用一个绝对定位、width:max-content 的量尺元素，结果与窗口大小无关。
    */
   function measureTextWidth(text, styleSource) {
@@ -380,47 +388,51 @@
   }
 
   /**
-   * 把窗口缩到刚好包住内容。
-   * 之前宽度是写死的（默认 1000px），结果歌词只占中间一小块，
-   * 右侧一大片空白仍然会挡住桌面上的点击、也会把拖拽区域撑得很宽。
-   * 现在按「封面 + 当前句的实际宽度」定宽，按内容定高。
+   * 按设置算出一个固定尺寸并通知主进程。
    *
-   * 窗口本身设成了 resizable:false（主进程），所以这里量出来的宽度不会再被
-   * 用户拖动或系统回调改掉，也就不需要防重入的守卫了。
+   * 这里**绝对不要**再读 el.cur / el.tr / el.nxt 的文本：一旦尺寸依赖歌词内容，
+   * 窗口就会在每句之间忽大忽小 —— 那正是这次要修的问题。
+   * 尺寸只跟这些设置有关：字号、封面大小/开关、行距、是否显示翻译与下一句、频谱。
+   *
+   * 窗口本身设成了 resizable:false（主进程），所以这里算出来的尺寸不会被
+   * 用户拖动或系统回调改掉，也就不需要防重入的守卫。
    */
-  function fitWindow() {
+  function applyWindowSize() {
     const rootStyle = getComputedStyle(el.root);
     const padX = (parseFloat(rootStyle.paddingLeft) || 0) + (parseFloat(rootStyle.paddingRight) || 0);
     const padY = (parseFloat(rootStyle.paddingTop) || 0) + (parseFloat(rootStyle.paddingBottom) || 0);
     const gap = parseFloat(rootStyle.gap) || 0;
-    const coverHidden = L.showCover === false || el.cover.parentElement.classList.contains('hidden');
+    const coverHidden = L.showCover === false;
     const coverW = coverHidden ? 0 : el.cover.offsetWidth;
 
-    // 歌词自然宽度：取当前句、下一句、翻译里最宽的一条
-    const cands = [];
-    if (!el.cur.classList.contains('hidden')) cands.push([el.cur.textContent, el.cur]);
-    if (!el.nxt.classList.contains('hidden')) cands.push([el.nxt.textContent, el.nxt]);
-    if (!el.tr.classList.contains('hidden')) cands.push([el.tr.textContent, el.tr]);
-    let textW = 0;
-    for (const [txt, src] of cands) textW = Math.max(textW, measureTextWidth(txt, src));
-    textW = Math.min(textW, MAX_TEXT_W);
-    // 量出来的宽度留 4% + 6px 余量：测量与实际排版会差几个像素，
-    // 贴着边界时最后两个字就会被挤到第二行（之前就出现过整句折行）
-    if (textW > 0) textW = Math.ceil(textW * 1.04) + 6;
+    const size = Math.max(12, Math.min(90, Number(L.fontSize) || 26));
+    const lineH = size * 1.26;
+    const lg = Number(L.lineGap === undefined ? 12 : L.lineGap) || 0;
+    const lyrPadR = parseFloat(el.lyr.style.paddingRight) || 0;
+
+    // 宽度：固定参考字宽 + 封面 + 内边距（与当前歌词无关）
+    const textW = Math.ceil(measureTextWidth('测'.repeat(REF_CJK), el.cur) * 1.04) + TEXT_PAD;
 
     const panelOpen = el.panel.classList.contains('open');
     // 面板展开时把它当成一个并排的兄弟块算进去，窗口就会真的变宽给歌词让位；
     // 光把面板设成 absolute 的话它不参与布局，窗口再宽也只会盖住歌词。
     const panelW = panelOpen ? el.panel.offsetWidth + 8 : 0;
     const extraW = panelW ? panelW + 14 : 0;
-    const wantW = padX + coverW + (coverW ? gap : 0) + textW + TEXT_PAD + extraW;
+    const wantW = padX + coverW + (coverW ? gap : 0) + textW + lyrPadR + extraW;
     const maxW = Math.max(MIN_W, Math.min(MAX_W, screen.availWidth - 40));
 
-    // 高度：按内容真实高度算（innerHeight 不能被拿来反推，窗口本身会变）
+    // 高度：按「当前句两行 + 翻译一行 + 下一句一行 + 频谱」预留，同样是固定值。
+    // 都按「可能会出现」预留，所以某首歌没有翻译时只是多留了一点空白，
+    // 不会因为歌词变了就改高度。
+    let rows = CUR_LINES * lineH;
+    if (L.showTranslation !== false) rows += lg + lineH + 3;   // +3 是 .tr-text 的 margin-top
+    if (L.showNextLine !== false) rows += lg + lineH;
+    if (specActive()) rows += lg + (Number(el.spec.offsetHeight) || Math.round(size * 0.7));
+
     let contentH = padY + 4;
     if (coverW) contentH = Math.max(contentH, coverW + padY + 4);
+    contentH = Math.max(contentH, rows + padY + 4);
     if (panelOpen) contentH = Math.max(contentH, el.panel.scrollHeight + 46);
-    else contentH = Math.max(contentH, el.lyr.scrollHeight + padY + 4);
 
     const W = Math.max(MIN_W, Math.min(maxW, Math.ceil(wantW)));
     const H = Math.max(MIN_H, Math.min(panelOpen ? MAX_PANEL_H : MAX_H, Math.ceil(contentH)));

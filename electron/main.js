@@ -557,8 +557,8 @@ function createLyricsWindow() {
   if (lyricsWindow && !lyricsWindow.isDestroyed()) return lyricsWindow;
   const L = settingsStore.get('lyrics', DEFAULTS.DEFAULT_SETTINGS.lyrics);
   const pos = L.pos || {};
-  const w = pos.w || 1000;
-  const h = pos.h || 190;
+  const w = pos.w || 560;
+  const h = pos.h || 216;
   const x = Number.isFinite(pos.x) ? pos.x : Math.round((screen.getPrimaryDisplay().workAreaSize.width - w) / 2);
   const y = Number.isFinite(pos.y) ? pos.y : Math.round(screen.getPrimaryDisplay().workAreaSize.height - h - 90);
 
@@ -569,8 +569,8 @@ function createLyricsWindow() {
     transparent: true,
     backgroundColor: '#00000000',
     hasShadow: false,
-    // 不可拉伸：用户手动拉宽后会被「贴合内容」立刻缩回去，看着像回弹。
-    // 宽度和高度都由渲染进程按内容算，这里直接禁掉手动改大小。
+    // 不可拉伸：宽高由渲染进程按设置算成固定值（不再按每句歌词贴紧内容，
+    // 那样换一句窗口就变一次大小），这里直接禁掉手动改大小。
     resizable: false,
     movable: true,
     skipTaskbar: true,
@@ -596,9 +596,9 @@ function createLyricsWindow() {
 
   const persistPos = () => {
     if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
-    // 渲染进程还没报过「贴合后的尺寸」之前不要写盘：
+    // 渲染进程还没报过「算好的固定尺寸」之前不要写盘：
     // 窗口创建时用的是配置里的旧尺寸，这时候存一次就会把旧宽高又写回去，
-    // 把自动贴合的结果覆盖掉（下次启动又变成 1000×190 的大框）。
+    // 把渲染层算出来的结果覆盖掉。
     if (!lyricsSized) return;
     settingsStore.set('lyrics.pos', lyricsWindow.getBounds());
   };
@@ -1239,7 +1239,15 @@ function setupIpc() {
   handle('lyricsWin:resetPos', () => {
     if (lyricsWindow && !lyricsWindow.isDestroyed()) {
       const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-      lyricsWindow.setBounds({ x: Math.round((width - 1000) / 2), y: height - 280, width: 1000, height: 190 });
+      // 只重置位置，**不要**顺手改宽高：尺寸由渲染层按设置算（固定大小），
+      // 这里写死 1000x190 会把那套固定尺寸顶掉，而且再也没有人来纠正它。
+      const b = lyricsWindow.getBounds();
+      lyricsWindow.setBounds({
+        x: Math.round((width - b.width) / 2),
+        y: height - b.height - 90,
+        width: b.width,
+        height: b.height
+      });
     }
     return { ok: true };
   });
