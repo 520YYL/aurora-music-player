@@ -7,6 +7,8 @@
   const { ce } = U;
 
   function coverUrl(track) {
+    // 在线曲目的封面是主进程代理出来的地址，直接用它
+    if (track && track.coverUrl) return track.coverUrl;
     if (track && track.hasCover) return U.coverUrlOf(track.id);
     return null;
   }
@@ -220,6 +222,7 @@
     if (t) {
       const meta = ce('div', { class: 'row', style: { marginTop: '10px', flexWrap: 'wrap', gap: '6px' } }, [
         fmtBadge(t),
+        t.online ? ce('span', { class: 'chip', text: '在线播放' }) : null,
         ce('span', { class: 'chip', text: U.fmtTime((t.duration || 0) / 1000) }),
         ce('span', { class: 'chip', text: `${t.bitrate ? Math.round(t.bitrate / 1000) + ' kbps' : '—'}` }),
         ce('span', { class: 'chip', text: `${t.sampleRate ? (t.sampleRate / 1000).toFixed(1) + ' kHz' : '—'}` }),
@@ -227,12 +230,20 @@
         ce('span', { class: 'chip', id: 'npCumulative', text: `累计 ${U.fmtMs(app.trackLivePlayedMs(t.id))}` })
       ]);
       info.appendChild(meta);
-      const ops = ce('div', { class: 'row', style: { marginTop: '12px', gap: '8px', flexWrap: 'wrap' } }, [
+      // 在线曲目没有本地文件，只保留云端相关的操作
+      const opsList = t.online ? [
+        ce('button', {
+          class: 'btn sm', text: '🌐 在 B 站中打开',
+          onclick: () => window.aurora.app.openExternal('https://www.bilibili.com/video/' + encodeURIComponent(t.videoId))
+        }),
+        ce('button', { class: 'btn sm', text: app.lyrics.sourcePath ? '🔄 重新载入歌词' : '🔍 查找歌词', onclick: () => app.reloadLyrics(true) })
+      ] : [
         ce('button', { class: 'btn sm', text: '📂 所在文件夹', onclick: () => window.aurora.library.showInFolder(t.path) }),
         ce('button', { class: 'btn sm', text: '📝 导入歌词', onclick: () => app.importLyrics() }),
         ce('button', { class: 'btn sm', text: '✏️ 编辑歌词', onclick: () => app.editLyrics() }),
         ce('button', { class: 'btn sm', text: app.lyrics.sourcePath ? '🔄 重新载入歌词' : '🔍 查找歌词', onclick: () => app.reloadLyrics(true) })
-      ]);
+      ];
+      const ops = ce('div', { class: 'row', style: { marginTop: '12px', gap: '8px', flexWrap: 'wrap' } }, opsList);
       info.appendChild(ops);
     }
     left.appendChild(info);
@@ -246,6 +257,113 @@
 
     window.Lyrics.renderTo(lbox, app.lyrics, { onSeek: (s) => app.player.seek(s) });
     requestAnimationFrame(() => window.Lyrics.scrollToActive(lbox, false));
+    return wrap;
+  }
+
+  /* ================================================================== */
+  /* 在线音乐视图（哔哩哔哩公开接口）                                      */
+  /* ================================================================== */
+  function onlineRow(app, t, i, cols) {
+    const playing = app.player.current && app.player.current.id === t.id;
+    const el = ce('div', {
+      class: `track-row${playing ? ' playing' : ''}`,
+      'data-id': t.id,
+      style: { '--cols': cols }
+    });
+    el.appendChild(ce('div', { class: 't-idx' }, [
+      ce('span', { class: 'num', text: playing ? '♪' : String(i + 1) }),
+      ce('span', { class: 'play-mini', text: '▶', onclick: (e) => { e.stopPropagation(); app.playOnlineAt(i); } })
+    ]));
+    el.appendChild(ce('div', { class: 't-drag' }));
+    el.appendChild(ce('div', { class: 't-main' }, [
+      coverEl(t, 't-cover'),
+      ce('div', { class: 'grow', style: { minWidth: 0 } }, [
+        ce('div', { class: 't-title', text: t.title, title: t.title }),
+        ce('div', { class: 't-sub', text: t.artist })
+      ])
+    ]));
+    el.appendChild(ce('div', { class: 't-cell', text: t.album || '—', title: t.album || '' }));
+    const fmtCell = ce('div', { class: 't-cell' });
+    fmtCell.appendChild(fmtBadge(t));
+    el.appendChild(fmtCell);
+    el.appendChild(ce('div', { class: 't-cell', text: U.fmtTime((t.duration || 0) / 1000) }));
+    el.appendChild(ce('div', { class: 't-cell', text: '在线' }));
+    el.appendChild(ce('div', { class: 't-cell' }));
+    el.appendChild(ce('div', { class: 't-actions' }, [
+      ce('button', {
+        class: 'btn icon ghost', text: '▶', title: '播放',
+        onclick: (e) => { e.stopPropagation(); app.playOnlineAt(i); }
+      })
+    ]));
+    el.addEventListener('click', () => app.playOnlineAt(i));
+    return el;
+  }
+
+  function online(app) {
+    const st = app.state.online || { query: '', loading: false, error: '', tracks: [] };
+    const wrap = ce('div', { class: 'col', style: { height: '100%' } });
+
+    const sub = st.error ? '搜索出错了'
+      : st.loading ? '正在搜索…'
+        : st.query ? `“${st.query}” · ${st.tracks.length} 首`
+          : '在上方搜索框输入歌名或歌手，例如：周杰伦 晴天';
+    wrap.appendChild(ce('div', { class: 'view-head' }, [
+      ce('div', {}, [ce('h1', { text: '在线音乐' }), ce('div', { class: 'sub', text: sub })])
+    ]));
+
+    const tb = ce('div', { class: 'toolbar' });
+    tb.appendChild(ce('button', {
+      class: 'btn primary sm', html: '🔍 搜索在线音乐',
+      onclick: () => { const s = document.querySelector('#search'); if (s) { s.focus(); s.select(); } }
+    }));
+    if (st.tracks.length) {
+      tb.appendChild(ce('button', { class: 'btn sm', html: '▶ 播放全部结果', onclick: () => app.playOnlineAt(0) }));
+    }
+    tb.appendChild(ce('div', { class: 'sep' }));
+    tb.appendChild(ce('span', { class: 'muted', style: { fontSize: '12px' }, text: '来自哔哩哔哩 · 无需 API Key · 播放时实时解析音频流' }));
+    wrap.appendChild(tb);
+
+    const body = ce('div', { class: 'view-body' });
+    wrap.appendChild(body);
+
+    if (st.loading) {
+      body.appendChild(ce('div', { class: 'empty' }, [
+        ce('div', { class: 'big', text: '⏳' }),
+        ce('h3', { text: '正在搜索…' }),
+        ce('p', { text: st.query })
+      ]));
+      return wrap;
+    }
+    if (st.error) {
+      body.appendChild(ce('div', { class: 'empty' }, [
+        ce('div', { class: 'big', text: '⚠️' }),
+        ce('h3', { text: '在线搜索失败' }),
+        ce('p', { text: st.error }),
+        ce('button', { class: 'btn primary', text: '重试', onclick: () => app.onlineSearch(st.query) })
+      ]));
+      return wrap;
+    }
+    if (!st.tracks.length) {
+      body.appendChild(ce('div', { class: 'empty' }, [
+        ce('div', { class: 'big', text: '🌐' }),
+        ce('h3', { text: st.query ? '没有找到匹配的歌曲' : '搜索在线音乐' }),
+        ce('p', { html: st.query ? '换个关键词试试，或清空搜索框重新输入。' : '在顶部搜索框输入关键词（例如「周杰伦 晴天」）后按回车，即可搜索在线歌曲。<br>结果会显示歌名、歌手、UP主、封面和时长，点击即可播放，播放时自动按需解析音频流。' })
+      ]));
+      return wrap;
+    }
+
+    const cols = '34px 34px minmax(160px, 2.6fr) minmax(110px, 1.5fr) 62px 60px 108px 84px 78px';
+    const head = ce('div', { class: 'track-head', style: { '--cols': cols } });
+    for (const label of ['#', '', '标题', 'UP主', '格式', '时长', '来源', '', '操作']) {
+      head.appendChild(ce('div', { text: label }));
+    }
+    body.appendChild(head);
+
+    const listEl = ce('div', { class: 'track-list' });
+    const frag = document.createDocumentFragment();
+    st.tracks.forEach((t, i) => frag.appendChild(onlineRow(app, t, i, cols)));
+    listEl.appendChild(frag);
+    body.appendChild(listEl);
     return wrap;
   }
 
@@ -285,5 +403,5 @@
     return wrap;
   }
 
-  window.Views = { library, nowPlaying, playlists, coverEl, coverUrl, fmtBadge };
+  window.Views = { library, nowPlaying, playlists, online, coverEl, coverUrl, fmtBadge };
 })();

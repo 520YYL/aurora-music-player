@@ -30,7 +30,9 @@
       stats: {},
       appInfo: null,
       coverStats: null,
-      settings: null
+      settings: null,
+      // 在线音乐（哔哩哔哩）搜索状态 —— 与本地曲库完全隔离，不污染 state.tracks
+      online: { query: '', loading: false, error: '', tracks: [] }
     }
   };
   window.App = App;
@@ -102,7 +104,7 @@
       loadLyricsFor(track);
       syncOverlays(true);   // 切歌立刻把新歌词推到桌面歌词窗，别等下一次 250ms 轮询
       saveLastPlayback();   // 切歌立刻记下来，避免退出时来不及写
-      if (App.state.view === 'library') markPlayingRow();
+      if (App.state.view === 'library' || App.state.view === 'online') markPlayingRow();
       // 正在播放页是整页快照：切歌时必须重绘，否则封面/标题/累计会一直停在上一首
       if (App.state.view === 'now') App.render();
       syncOverlays();
@@ -344,6 +346,7 @@
       case 'now': el = window.Views.nowPlaying(App); break;
       case 'subtitle': el = window.Views.subtitle(App); break;
       case 'playlists': el = window.Views.playlists(App); break;
+      case 'online': el = window.Views.online(App); break;
       case 'stats': el = window.Panels.stats(App); break;
       case 'eq': el = window.Panels.eq(App); break;
       case 'plugins': el = window.Panels.plugins(App); break;
@@ -432,6 +435,67 @@
     const list = App.visibleTracks();
     if (!list.length) return;
     App.player.setQueue(list, 0);
+  };
+
+  /* ------------------------------ 在线音乐 ------------------------------ */
+  /**
+   * 把主进程返回的搜索结果转成播放器能吃的曲目对象。
+   * 关键点：path 为 null + online:true —— audio-engine.setSource 会据此改用
+   * aurora://local/stream，其余（播放/暂停/上下首/音量/进度）全部复用现有逻辑。
+   */
+  function onlineTrackFrom(item) {
+    return {
+      id: 'yt_' + item.videoId,
+      online: true,
+      videoId: item.videoId,
+      title: item.title,
+      artist: item.artist,
+      album: item.album,
+      duration: item.duration, // 毫秒，和本地曲目一致
+      format: '在线',
+      path: null,
+      hasCover: false,
+      coverUrl: api.online.thumbUrl(item.thumbnail)
+    };
+  }
+
+  /** 播放第 i 首在线结果（整份搜索结果作为播放队列，可自动上下首） */
+  App.playOnlineAt = function (i) {
+    const list = App.state.online.tracks;
+    if (!list.length) return;
+    const idx = Math.max(0, Math.min(list.length - 1, Number(i) || 0));
+    App.player.setQueue(list, idx);
+  };
+
+  /** 搜索在线音乐（结果只放在 state.online，不写进 state.tracks，避免污染本地曲库） */
+  App.onlineSearch = async function (query) {
+    const st = App.state.online;
+    const q = String(query == null ? '' : query).trim();
+    if (!q) {
+      st.query = ''; st.loading = false; st.error = ''; st.tracks = [];
+      if (App.state.view === 'online') App.render();
+      return;
+    }
+    st.query = q; st.loading = true; st.error = ''; st.tracks = [];
+    if (App.state.view !== 'online') App.setView('online'); else App.render();
+
+    let res;
+    try {
+      res = await api.online.search(q, 40);
+    } catch (err) {
+      res = { __error: err && err.message ? err.message : String(err) };
+    }
+    // 期间用户又搜了别的关键词，丢弃这次的结果
+    if (App.state.online.query !== q) return;
+    st.loading = false;
+    if (!res || res.__error) {
+      st.error = (res && res.__error) || '搜索失败';
+      st.tracks = [];
+    } else {
+      st.error = '';
+      st.tracks = (res.items || []).filter((x) => x && x.videoId).map(onlineTrackFrom);
+    }
+    if (App.state.view === 'online') App.render();
   };
 
   App.toggleFavorite = async function (id) {
@@ -614,8 +678,9 @@
       title: t ? (t.title || t.name) : '',
       artist: t ? (t.artist || '') : '',
       album: t ? (t.album || '') : '',
-      hasCover: !!(t && t.hasCover),
+      hasCover: !!(t && (t.hasCover || t.coverUrl)),
       coverId: t ? t.id : null,
+      coverSrc: t ? (window.Views.coverUrl(t) || '') : '',
       playing: st.playing,
       position: st.position,
       duration: st.duration,
@@ -662,8 +727,9 @@
       title: t ? (t.title || t.name) : '',
       artist: t ? (t.artist || '') : '',
       album: t ? (t.album || '') : '',
-      hasCover: !!(t && t.hasCover),
+      hasCover: !!(t && (t.hasCover || t.coverUrl)),
       coverId: t ? t.id : null,
+      coverSrc: t ? (window.Views.coverUrl(t) || '') : '',
       playing: st.playing,
       position: st.position,
       duration: st.duration,
@@ -721,6 +787,14 @@
           else App.setView('playlists');
           return;
         }
+        if (view === 'online') {
+          App.setView('online');
+          // 搜索框里已经有内容就直接搜一次，省得用户再敲一遍
+          const box = $('#search');
+          const q = box ? box.value.trim() : '';
+          if (q && q !== App.state.online.query) App.onlineSearch(q);
+          return;
+        }
         App.setView(view);
       };
     });
@@ -740,15 +814,29 @@
     const inp = $('#search');
     const clear = $('#searchClear');
     inp.addEventListener('input', U.debounce(() => {
-      App.state.search = inp.value;
       clear.classList.toggle('hidden', !inp.value);
+      // 在线搜索只在回车时触发：避免每敲一个字就打一次接口
+      if (App.state.view === 'online') return;
+      App.state.search = inp.value;
       if (!['library', 'favorites', 'recent', 'playlist'].includes(App.state.view)) App.setView('library');
       else App.render();
     }, 160));
     inp.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { inp.value = ''; App.state.search = ''; clear.classList.add('hidden'); App.render(); inp.blur(); }
+      if (e.key === 'Escape') {
+        inp.value = ''; App.state.search = ''; clear.classList.add('hidden');
+        if (App.state.view === 'online') App.onlineSearch(''); else App.render();
+        inp.blur();
+        return;
+      }
+      if (e.key === 'Enter' && App.state.view === 'online') {
+        e.preventDefault();
+        App.onlineSearch(inp.value);
+      }
     });
-    clear.onclick = () => { inp.value = ''; App.state.search = ''; clear.classList.add('hidden'); App.render(); };
+    clear.onclick = () => {
+      inp.value = ''; App.state.search = ''; clear.classList.add('hidden');
+      if (App.state.view === 'online') App.onlineSearch(''); else App.render();
+    };
   }
 
   /* ================================ 播放栏 ================================ */
@@ -880,9 +968,10 @@
   function updateNowPlayingUi() {
     const t = App.player.current;
     const cover = $('#npCover');
-    if (t && t.hasCover) {
+    const coverSrc = t ? window.Views.coverUrl(t) : null;
+    if (coverSrc) {
       cover.classList.remove('ph');
-      cover.style.backgroundImage = `url("${U.coverUrlOf(t.id)}")`;
+      cover.style.backgroundImage = `url("${coverSrc}")`;
       cover.textContent = '';
     } else {
       cover.classList.add('ph');

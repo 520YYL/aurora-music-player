@@ -12,6 +12,7 @@ const { pathToFileURL } = require('node:url');
 const { JsonStore, deepMerge, deepClone } = require('./store');
 const scanner = require('./scanner');
 const { findLyrics } = require('./lyrics-finder');
+const online = require('./online');
 const DEFAULTS = require('../src/js/defaults.js');
 const PRESETS = require('../src/js/presets.js');
 
@@ -214,6 +215,29 @@ async function handleAuroraRequest(req) {
       const target = path.join(APP_ROOT, 'assets', rel);
       if (!target.startsWith(path.join(APP_ROOT, 'assets'))) return new Response('Forbidden', { status: 403 });
       return fileResponse(target, req);
+    }
+    // 在线音乐：音频流（支持 Range，可直接喂给 <audio>）
+    if (kind === 'stream') {
+      const v = params.get('v');
+      if (!v || !/^[A-Za-z0-9_-]{6,20}$/.test(v)) return new Response('Bad video id', { status: 400 });
+      try {
+        return await online.streamResponse(v, req);
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        trace('proto stream FAIL ' + v + ' ' + msg);
+        return new Response('在线音频不可用：' + msg, { status: 502 });
+      }
+    }
+    // 在线音乐：封面代理（避免放开 CSP 去直连外链图）
+    if (kind === 'thumb') {
+      const u = params.get('u');
+      if (!u) return new Response('Missing url', { status: 400 });
+      try {
+        return await online.imageResponse(u);
+      } catch (err) {
+        trace('proto thumb FAIL ' + (err && err.message ? err.message : err));
+        return new Response('封面不可用', { status: 502 });
+      }
     }
     return new Response('Not Found', { status: 404 });
   }
@@ -898,6 +922,9 @@ function setupIpc() {
     try { return await fn(evt, ...args); }
     catch (err) { return { __error: String(err && err.message ? err.message : err) }; }
   });
+
+  // 在线音乐（哔哩哔哩公开接口）：只暴露搜索，音频/封面走 aurora:// 协议
+  handle('online:search', (evt, query, limit) => online.search(query, limit));
 
   handle('app:info', () => ({
     version: app.getVersion(),

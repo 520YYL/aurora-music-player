@@ -92,6 +92,12 @@ contextBridge.exposeInMainWorld('aurora', {
   cover: {
     pickFor: (id) => invoke('cover:pickFor', id)
   },
+  // 在线音乐（哔哩哔哩公开接口，无需 API Key / 无需服务器）
+  online: {
+    search: (query, limit) => invoke('online:search', query, limit),
+    streamUrl: (videoId) => `aurora://local/stream?v=${encodeURIComponent(videoId)}`,
+    thumbUrl: (u) => (u ? `aurora://local/thumb?u=${encodeURIComponent(u)}` : '')
+  },
   debug: {
     windows: () => invoke('debug:windows')
   },

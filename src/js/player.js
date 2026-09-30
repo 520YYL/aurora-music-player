@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Aurora 极光音乐 —— 播放控制器
  * 播放列表 / 播放模式 / 切歌过渡 / 听歌时长累计 / 系统媒体控制
  */
@@ -433,7 +433,9 @@
           title: track.title || track.name || '',
           artist: track.artist || '未知歌手',
           album: track.album || '',
-          artwork: track.hasCover ? [{ src: window.aurora.app.mediaUrl(track.path), sizes: '512x512', type: 'image/jpeg' }] : []
+          artwork: track.hasCover
+            ? [{ src: window.aurora.app.mediaUrl(track.path), sizes: '512x512', type: 'image/jpeg' }]
+            : (track.coverUrl ? [{ src: track.coverUrl, sizes: '512x512', type: 'image/jpeg' }] : [])
         });
         navigator.mediaSession.setActionHandler('play', () => this.resume());
         navigator.mediaSession.setActionHandler('pause', () => this.pause());

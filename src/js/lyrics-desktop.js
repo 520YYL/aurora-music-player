@@ -448,7 +448,7 @@
       if (p.hasCover && p.coverId) {
         el.cover.classList.remove('ph');
         el.cover.textContent = '';
-        el.cover.style.backgroundImage = `url("${U.coverUrlOf(p.coverId)}")`;
+        el.cover.style.backgroundImage = `url("${p.coverSrc || U.coverUrlOf(p.coverId)}")`;
       } else {
         el.cover.classList.add('ph');
         el.cover.style.backgroundImage = '';
