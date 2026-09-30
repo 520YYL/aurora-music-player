@@ -834,7 +834,21 @@
       r.appendChild(fsVal);
       box.appendChild(r);
     }
-    box.appendChild(srow('行间距', range(0, 60, 1, L.lineGap || 12, (v) => patchLyrics({ lineGap: v })), `${L.lineGap || 12}px`));
+    // 行间距的最小值就是 0，所以判空必须写 `=== undefined`：
+    // 以前写的是 `L.lineGap || 12`，0 被当成「没有设置」，于是调成最小之后
+    // 一打开面板又显示 12（用户反馈的「每次调到最小，下次点右键发现不是最小了」）。
+    {
+      const lg0 = Number.isFinite(Number(L.lineGap)) ? Number(L.lineGap) : 12;
+      const gapVal = document.createElement('span');
+      gapVal.className = 'val';
+      gapVal.textContent = `${lg0}px`;
+      const r = srow('行间距', range(0, 60, 1, lg0, (v) => {
+        gapVal.textContent = `${v}px`;
+        patchLyrics({ lineGap: v });
+      }));
+      r.appendChild(gapVal);
+      box.appendChild(r);
+    }
 
     // 常用的就「配色 / 字号 / 行间距」这三项，其余全部收进「更多设置」：
     // 一打开面板就是十几个开关，连歌词都被挡住了。
