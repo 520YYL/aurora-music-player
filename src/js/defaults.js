@@ -89,6 +89,8 @@
       unsungColor: '#8a90a8',    // 还没唱到的部分
       cnFont: '"Microsoft YaHei UI", "PingFang SC", sans-serif',
       enFont: '"Segoe UI", "Arial", sans-serif',
+      jpFont: '"Meiryo", "Yu Gothic UI", "MS PGothic", "Hiragino Sans", "Noto Sans JP", sans-serif',
+      jpTrans: true,             // 日语（或纯外语）歌词自动去网易云补一份中文翻译
       shadow: { enabled: true, color: '#000000', blur: 14, x: 0, y: 2, opacity: 0.85 },
       karaoke: true,             // 逐字高亮
       sweepWidth: 8,             // 光带宽度（%），越小切得越硬

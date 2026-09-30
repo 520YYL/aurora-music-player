@@ -183,7 +183,8 @@
 }
 .ly-line.zh { font-family: var(--ly-cn, var(--font)); }
 .ly-line.en { font-family: var(--ly-en, var(--font)); }
-.ly-line .tr { display: block; font-size: .76em; opacity: .6; margin-top: 3px; }
+.ly-line.jp { font-family: var(--ly-jp, var(--ly-cn, var(--font))); }
+.ly-line .tr { display: block; font-size: .76em; opacity: .6; margin-top: 3px; font-family: var(--ly-cn, var(--font)); }
 .ly-line:hover { color: color-mix(in srgb, var(--text) 84%, transparent); }
 /* 已经唱过的行明显变暗，和「还没唱」拉开差距 */
 .ly-line.past { color: color-mix(in srgb, var(--text) 25%, transparent); }
@@ -288,7 +289,8 @@
 }
 .sub-line.zh { font-family: var(--ly-cn, var(--font)); }
 .sub-line.en { font-family: var(--ly-en, var(--font)); }
-.sub-line .sub-tr { display: block; font-size: .6em; font-weight: 500; opacity: .62; margin-top: 7px; letter-spacing: .6px; }
+.sub-line.jp { font-family: var(--ly-jp, var(--ly-cn, var(--font))); }
+.sub-line .sub-tr { display: block; font-size: .6em; font-weight: 500; opacity: .62; margin-top: 7px; letter-spacing: .6px; font-family: var(--ly-cn, var(--font)); }
 .sub-line.past { color: rgba(255, 255, 255, .14); }
 .sub-line.active {
   color: #fff; font-size: clamp(23px, 2.9vw, 40px); font-weight: 800;

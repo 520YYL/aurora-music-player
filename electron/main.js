@@ -1133,13 +1133,14 @@ function setupIpc() {
     } catch { return { count: 0, bytes: 0 }; }
   });
 
-  // 歌词：先找本地同名 .lrc；在线曲目（QQ音乐 / 酷狗 / 网易云）本地没有文件，
-  // 再按音源去各自的公开接口取一次（哔哩哔哩不取，见 lyrics-online.js 说明）
+  // 歌词：先找本地同名 .lrc；在线曲目（QQ音乐 / 酷狗 / 网易云 / 哔哩哔哩）本地没有文件，
+  // 再按音源去各自的公开接口取一次（B 站的 CC 字幕匿名拿不到，走跨源匹配，
+  // 详见 lyrics-online.js 的说明）
   handle('lyrics:find', async (e, track) => {
     const roots = settingsStore.get('library.roots', []);
     const res = await findLyrics(track, roots, LYRICS_DIR);
     if (res) return res;
-    if (!track || !track.source || track.source === 'bilibili') return null;
+    if (!track || !track.source) return null;
     try {
       return await onlineLyrics.fetchLyrics(track, !!track.force);
     } catch { return null; }

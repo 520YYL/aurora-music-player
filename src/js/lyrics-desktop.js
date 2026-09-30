@@ -120,9 +120,9 @@
     });
     Object.assign(el.nxt.style, base, { fontSize: `${Math.round(size * 0.66)}px`, opacity: '0.5' });
 
-    el.cur.style.fontFamily = L.cnFont || '';
-    el.tr.style.fontFamily = L.cnFont || '';
-    el.nxt.style.fontFamily = L.cnFont || '';
+    el.cur.style.fontFamily = fontFor('zh');
+    el.tr.style.fontFamily = fontFor('zh');
+    el.nxt.style.fontFamily = fontFor('zh');
     el.lyr.style.gap = `${L.lineGap === undefined ? 12 : L.lineGap}px`;
 
     // 字体描边和 background-clip:text 冲突（描边会盖住渐变），逐字模式下用它代替描边
@@ -190,9 +190,16 @@
     return [start, end];
   }
 
-  function paintLine(text, isCJK) {
+  /** 一行歌词该用哪套字体：日语 → jpFont，中文 → cnFont，其余 → enFont */
+  function fontFor(lang) {
+    const v = (typeof lang === 'string') ? lang : (lang ? 'zh' : 'en');
+    if (v === 'jp') return L.jpFont || L.cnFont || '';
+    return v === 'zh' ? (L.cnFont || '') : (L.enFont || '');
+  }
+
+  function paintLine(text, lang) {
     el.cur.textContent = text;
-    el.cur.style.fontFamily = isCJK ? (L.cnFont || '') : (L.enFont || '');
+    el.cur.style.fontFamily = fontFor(lang);
   }
 
   function paintKaraoke(p) {
@@ -268,7 +275,7 @@
         if (preludeText !== wanted) {
           preludeText = wanted;
           el.nxt.textContent = wanted;
-          el.nxt.style.fontFamily = lines[0].isCJK ? (L.cnFont || '') : (L.enFont || '');
+          el.nxt.style.fontFamily = fontFor(lines[0].lang || lines[0].isCJK);
           scheduleResize();
         }
         el.nxt.classList.remove('hidden');
@@ -284,7 +291,7 @@
       curIdx = i;
       curLineRange = rangeOf(i);
       window.__perf.rendered++;
-      paintLine(active.text, active.isCJK);
+      paintLine(active.text, active.lang || active.isCJK);
 
       if (active.tr && L.showTranslation !== false) {
         el.tr.textContent = '';
@@ -299,7 +306,7 @@
       if (nx && L.showNextLine !== false) {
         el.nxt.textContent = nx.text;
         el.nxt.classList.remove('hidden');
-        el.nxt.style.fontFamily = nx.isCJK ? (L.cnFont || '') : (L.enFont || '');
+        el.nxt.style.fontFamily = fontFor(nx.lang || nx.isCJK);
       } else el.nxt.classList.add('hidden');
 
       scheduleResize();

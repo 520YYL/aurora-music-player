@@ -85,10 +85,10 @@
         const non = group.filter((g) => !U.hasCJK(g) && g);
         const primary = cjk[0] || group[0] || '';
         const tr = (cjk.length && non.length) ? non.join(' / ') : (group.filter((g) => g !== primary).join(' / '));
-        merged.push({ key, t: r.t + offset, text: primary, tr: tr || '', isCJK: U.hasCJK(primary) });
+        merged.push({ key, t: r.t + offset, text: primary, tr: tr || '', isCJK: U.hasCJK(primary), lang: U.langOf(primary) });
       } else {
         const primary = group[0] || '';
-        merged.push({ key, t: r.t + offset, text: primary, tr: '', isCJK: U.hasCJK(primary) });
+        merged.push({ key, t: r.t + offset, text: primary, tr: '', isCJK: U.hasCJK(primary), lang: U.langOf(primary) });
       }
     }
 
@@ -148,10 +148,10 @@
       this.clear();
       if (!track) return this;
       this.title = track.title || track.name || '';
-      // 在线曲目（哔哩哔哩除外）：本地没有 .lrc，主进程会按 source/videoId 去音源接口取
-      this.onlineName = (track.source && track.source !== 'bilibili')
-        ? (track.sourceName || '在线音源')
-        : null;
+      // 在线曲目：本地没有 .lrc，主进程会按 source/videoId 去音源接口取
+      // （哔哩哔哩也取 —— 它没有可用的 CC 字幕，主进程改成跨源匹配同一首歌）
+      this.onlineName = track.source ? (track.sourceName || '在线音源') : null;
+      const LY = (window.App && window.App.settings && window.App.settings.lyrics) || {};
       const res = await window.aurora.lyrics.find({
         path: track.path,
         title: track.title,
@@ -162,6 +162,7 @@
         videoId: track.videoId,
         duration: track.duration,
         album: track.album,
+        jpTrans: LY.jpTrans !== false, // 日语/外语歌词是否去网易云补中文翻译
         force: !!force, // 「查找歌词」按钮：绕过缓存重试
         embeddedLyrics: track.embeddedLyrics
       });
@@ -246,7 +247,7 @@
     }
     const frag = document.createDocumentFragment();
     ctrl.lines.forEach((l, i) => {
-      const cls = ['ly-line', l.isCJK ? 'zh' : 'en'];
+      const cls = ['ly-line', l.lang || (l.isCJK ? 'zh' : 'en')];
       if (i === ctrl.current) cls.push(activeClass);
       else if (i < ctrl.current) cls.push(pastClass);
       if (karaoke && i === ctrl.current) cls.push('karaoke');

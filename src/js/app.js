@@ -165,6 +165,11 @@
     const radius = s.theme === 'flat' ? Math.min(8, s.radius) : (s.theme === 'neumorph' ? Math.max(16, s.radius) : s.radius);
     html.style.setProperty('--radius', `${radius}px`);
     if (s.fontFamily) html.style.setProperty('--font', s.fontFamily);
+    // 歌词 / 字幕按语言分字体：中文 / 西文 / 日文（日语行优先用日文字体）
+    const LY = s.lyrics || {};
+    html.style.setProperty('--ly-cn', LY.cnFont || s.fontFamily || '');
+    html.style.setProperty('--ly-en', LY.enFont || s.fontFamily || '');
+    html.style.setProperty('--ly-jp', LY.jpFont || LY.cnFont || s.fontFamily || '');
     document.body.className = `density-${s.density || 'cozy'}`;
 
     const bg = s.background || {};
@@ -863,7 +868,7 @@
     // 歌词正文每次都带上：浮层/迷你窗口可能是在歌词载入「之后」才被创建的，
     // 只发一次的 full 消息会丢掉，导致它们永远显示「暂无歌词」。
     // 37 行歌词约 1~2KB，4Hz 的同步量可以忽略。
-    const lines = App.lyrics.lines.map((l) => ({ t: l.t, text: l.text, tr: l.tr, isCJK: l.isCJK }));
+    const lines = App.lyrics.lines.map((l) => ({ t: l.t, text: l.text, tr: l.tr, isCJK: l.isCJK, lang: l.lang }));
     const payload = {
       full: true,
       lyricVersion: App.lyrics.sourcePath || App.lyrics.title || '',

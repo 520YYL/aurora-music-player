@@ -223,6 +223,20 @@
   /** 从文件名/标题推测语言，用于中英文字体分别渲染 */
   function hasCJK(s) { return /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff]/.test(String(s || '')); }
 
+  /** 有没有假名 —— 用来把日语从「中文」里分出来，单独走日文字体 */
+  function hasKana(s) { return /[\u3040-\u30ff]/.test(String(s || '')); }
+
+  /**
+   * 一行歌词的语言：'jp' 日语 / 'zh' 中文 / 'en' 其它。
+   * 日语里也夹汉字，所以先看假名；纯汉字行仍算中文（日文歌词里没有假名的行很少见，
+   * 而且用中文字体渲染汉字在两种语言下都能看）。
+   */
+  function langOf(s) {
+    const t = String(s || '');
+    if (hasKana(t)) return 'jp';
+    return hasCJK(t) ? 'zh' : 'en';
+  }
+
   function download(name, text) {
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const a = ce('a', { href: URL.createObjectURL(blob), download: name });
@@ -234,7 +248,7 @@
   window.U = {
     $, $$, ce, pad, fmtTime, fmtTimeTight, fmtMs, fmtLong, fmtSize, fmtDate, fmtDateTime, dayKey,
     escapeHtml, debounce, throttle, hotkeyFromEvent, matchHotkey, prettyHotkey,
-    toast, modal, confirmBox, clamp, hexToRgba, hasCJK, download, isMac,
+    toast, modal, confirmBox, clamp, hexToRgba, hasCJK, hasKana, langOf, download, isMac,
     coverUrlOf, bumpCover
   };
 })();

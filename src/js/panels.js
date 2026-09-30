@@ -502,6 +502,23 @@
       secP.appendChild(setRow('桌面歌词字号', '浮层上还能调行距、透明度、配色、封面', [
         slider(14, 90, 1, L.fontSize || 34, (v) => app.saveSettings({ lyrics: { ...L, fontSize: v } }), (v) => `${v}px`)
       ]));
+
+      const JP_FONTS = [
+        ['"Meiryo", "Yu Gothic UI", "MS PGothic", "Hiragino Sans", "Noto Sans JP", sans-serif', 'Meiryo / 游ゴシック'],
+        ['"Yu Gothic UI", "Meiryo", "Noto Sans JP", sans-serif', '游ゴシック UI'],
+        ['"MS PGothic", "Meiryo", sans-serif', 'MS PGothic'],
+        ['"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif', 'Hiragino 角ゴシック'],
+        ['"Microsoft YaHei UI", "PingFang SC", sans-serif', '跟随中文字体']
+      ];
+      const jpSel = ce('select', {}, []);
+      for (const [v, t] of JP_FONTS) {
+        jpSel.appendChild(ce('option', { value: v, text: t, selected: (L.jpFont || JP_FONTS[0][0]) === v }));
+      }
+      jpSel.onchange = () => app.saveSettings({ lyrics: { ...L, jpFont: jpSel.value } });
+      secP.appendChild(setRow('日文字体', '日语歌词单独用这套字体渲染（中文 / 西文各用各的字体）', [jpSel]));
+      secP.appendChild(setRow('日语字幕自动翻译', '日语（及纯外语）歌词会去网易云匹配同一首歌的中文翻译，显示成中日 / 中英双语', [
+        sw(L.jpTrans !== false, (v) => { app.saveSettings({ lyrics: { ...L, jpTrans: v } }); app.reloadLyrics(true); })
+      ]));
     }
     secP.appendChild(setRow('切歌过渡效果', '切换歌曲时的衔接方式', [select(D.TRANSITIONS.map((t) => ({ value: t.id, label: `${t.name} — ${t.desc}` })), P.transition, (v) => app.saveSettings({ playback: { ...P, transition: v } }))]));
     secP.appendChild(setRow('过渡时长', null, [slider(200, 5000, 100, P.transitionMs, (v) => app.saveSettings({ playback: { ...P, transitionMs: v } }), (v) => `${(v / 1000).toFixed(1)}s`)]));
