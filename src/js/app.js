@@ -704,11 +704,14 @@
     syncOverlays();
   }
 
-  App.reloadLyrics = async function () {
+  App.reloadLyrics = async function (force) {
     if (!App.player.current) return;
-    await App.lyrics.loadFor(App.player.current);
+    await App.lyrics.loadFor(App.player.current, force);
     renderLyricsBox();
-    U.toast(App.lyrics.lines.length ? `已载入 ${App.lyrics.lines.length} 行歌词` : '没有找到歌词文件', App.lyrics.lines.length ? 'ok' : 'err');
+    U.toast(App.lyrics.lines.length
+      ? `已载入 ${App.lyrics.lines.length} 行歌词${App.lyrics.onlineName && App.lyrics.sourcePath ? `（${App.lyrics.sourcePath}）` : ''}`
+      : (App.lyrics.onlineName ? `${App.lyrics.onlineName}没有这首歌的歌词` : '没有找到歌词'),
+      App.lyrics.lines.length ? 'ok' : 'err');
   };
 
   App.importLyrics = async function () {

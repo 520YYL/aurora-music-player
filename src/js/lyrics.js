@@ -125,6 +125,7 @@
       this.raw = '';
       this.sourcePath = null;
       this.title = '';
+      this.onlineName = null; // 在线曲目：显示「已尝试从 XX音乐 获取歌词」用
       this.creditsSkipped = 0;
       this.onChange = opts && opts.onChange ? opts.onChange : () => {};
       this.offsetMs = 0;
@@ -136,20 +137,39 @@
       this.current = -1;
       this.raw = '';
       this.sourcePath = null;
+      this.onlineName = null;
       this.creditsSkipped = 0;
       this.onChange(this);
     }
 
     get empty() { return !this.lines.length; }
 
-    async loadFor(track) {
+    async loadFor(track, force) {
       this.clear();
       if (!track) return this;
       this.title = track.title || track.name || '';
-      const res = await window.aurora.lyrics.find({ path: track.path, title: track.title, artist: track.artist, name: track.name, embeddedLyrics: track.embeddedLyrics });
+      // 在线曲目（哔哩哔哩除外）：本地没有 .lrc，主进程会按 source/videoId 去音源接口取
+      this.onlineName = (track.source && track.source !== 'bilibili')
+        ? (track.sourceName || '在线音源')
+        : null;
+      const res = await window.aurora.lyrics.find({
+        path: track.path,
+        title: track.title,
+        artist: track.artist,
+        name: track.name,
+        // 在线曲目：本地没有 .lrc，主进程会按 source/videoId 去音源接口取一次
+        source: track.source,
+        videoId: track.videoId,
+        duration: track.duration,
+        album: track.album,
+        force: !!force, // 「查找歌词」按钮：绕过缓存重试
+        embeddedLyrics: track.embeddedLyrics
+      });
       if (!res) return this;
       let text = '';
-      if (res.embedded && res.text) text = res.text;
+      // res.text：内嵌歌词，或在线取的歌词（label 记着来自哪个音源）
+      // res.base64：本地 .lrc 文件内容
+      if (res.text) text = res.text;
       else if (res.base64) text = decodeBuffer(res.base64);
       if (!text || !text.trim()) return this;
       const parsed = parseLrc(text);
@@ -157,7 +177,7 @@
       this.meta = parsed.meta || {};
       this.creditsSkipped = parsed.creditsSkipped || 0;
       this.raw = text;
-      this.sourcePath = res.path || null;
+      this.sourcePath = res.path || res.label || null;
       this.onChange(this);
       return this;
     }
@@ -217,7 +237,11 @@
     const { activeClass = 'active', pastClass = 'past', showTr = true, karaoke = true } = opts;
     container.innerHTML = '';
     if (!ctrl.lines.length) {
-      container.appendChild(U.ce('div', { class: 'ly-empty', html: opts.emptyHtml || '暂无歌词<br><span style="font-size:12px">把同名 .lrc 文件放到歌曲旁边，或点击「导入歌词」</span>' }));
+      // 在线曲目失败时给不一样的提示，免得用户以为要自己去找 .lrc 文件
+      const fallback = ctrl.onlineName
+        ? `暂无歌词<br><span style="font-size:12px">已尝试从${ctrl.onlineName}获取，没找到；可点「查找歌词」重试，或「导入歌词」</span>`
+        : '暂无歌词<br><span style="font-size:12px">把同名 .lrc 文件放到歌曲旁边，或点击「导入歌词」</span>';
+      container.appendChild(U.ce('div', { class: 'ly-empty', html: opts.emptyHtml || fallback }));
       return;
     }
     const frag = document.createDocumentFragment();

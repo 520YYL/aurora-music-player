@@ -83,7 +83,11 @@
     const empty = ce('div', { class: 'sub-empty' });
     empty.appendChild(ce('div', { class: 'big', text: '🎤' }));
     empty.appendChild(ce('h3', { text: '暂无歌词' }));
-    empty.appendChild(ce('p', { text: '把同名 .lrc 文件放到歌曲旁边，或到「正在播放」页点「导入歌词」。' }));
+    empty.appendChild(ce('p', {
+      text: (cur && cur.source && cur.source !== 'bilibili')
+        ? `已尝试从${cur.sourceName || '在线音源'}获取歌词，暂时没找到。可在「正在播放」页点「查找歌词」重试，或导入本地 .lrc。`
+        : '把同名 .lrc 文件放到歌曲旁边，或到「正在播放」页点「导入歌词」。'
+    }));
     stage.appendChild(empty);
 
     /* ---------------- 底栏：进度 ---------------- */

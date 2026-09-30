@@ -12,6 +12,7 @@ const { pathToFileURL } = require('node:url');
 const { JsonStore, deepMerge, deepClone } = require('./store');
 const scanner = require('./scanner');
 const { findLyrics } = require('./lyrics-finder');
+const onlineLyrics = require('./lyrics-online');
 const online = require('./online');
 const aggregator = require('./aggregator');
 const DEFAULTS = require('../src/js/defaults.js');
@@ -1132,11 +1133,16 @@ function setupIpc() {
     } catch { return { count: 0, bytes: 0 }; }
   });
 
-  // 歌词
+  // 歌词：先找本地同名 .lrc；在线曲目（QQ音乐 / 酷狗 / 网易云）本地没有文件，
+  // 再按音源去各自的公开接口取一次（哔哩哔哩不取，见 lyrics-online.js 说明）
   handle('lyrics:find', async (e, track) => {
     const roots = settingsStore.get('library.roots', []);
     const res = await findLyrics(track, roots, LYRICS_DIR);
-    return res;
+    if (res) return res;
+    if (!track || !track.source || track.source === 'bilibili') return null;
+    try {
+      return await onlineLyrics.fetchLyrics(track, !!track.force);
+    } catch { return null; }
   });
   handle('lyrics:import', async (e, trackId) => {
     const res = await dialog.showOpenDialog(mainWindow, {
