@@ -80,7 +80,7 @@
       alwaysOnTop: true,
       // 外观
       style: 'karaoke',          // karaoke | classic | minimal
-      fontSize: 34,              // 14 - 90
+      fontSize: 26,              // 12 - 90；正在唱 / 翻译 / 下一句三行统一用这个固定字号
       weight: 700,
       lineGap: 12,
       opacity: 0.96,

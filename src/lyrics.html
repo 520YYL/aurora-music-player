@@ -73,7 +73,9 @@
     #cur { line-height: 1.26; }
     #nxt { opacity: .48; }
     #tr { opacity: .8; }
-    .tr-text { display: block; font-size: .64em; margin-top: 3px; opacity: .85; }
+    /* 翻译行与正文字号一致（字号由 JS 统一设定，这里只负责排版），
+       主次靠透明度区分——以前这里按 .64em 缩过，同一屏两行一大一小。 */
+    .tr-text { display: block; font-size: 1em; margin-top: 3px; opacity: .85; }
     #empty { color: #fff; opacity: .62; font-size: 14px; }
     .hidden { display: none !important; }
     #bar {

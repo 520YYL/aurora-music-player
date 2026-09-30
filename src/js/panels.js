@@ -563,8 +563,8 @@
         ce('button', { class: 'btn sm', text: '↺ 回到默认位置', onclick: () => window.aurora.lyrics.resetPos() })
       ]));
       secP.appendChild(setRow('桌面歌词风格', '更多外观选项在浮层上右键打开', [styleSel]));
-      secP.appendChild(setRow('桌面歌词字号', '浮层上还能调行距、透明度、配色、封面', [
-        slider(14, 90, 1, L.fontSize || 34, (v) => app.saveSettings({ lyrics: { ...L, fontSize: v } }), (v) => `${v}px`)
+      secP.appendChild(setRow('桌面歌词字号', '正在唱 / 翻译 / 下一句三行统一用这个字号，区分主次靠颜色和透明度；浮层上还能调行距、透明度、配色、封面', [
+        slider(12, 90, 1, L.fontSize || 26, (v) => app.saveSettings({ lyrics: { ...L, fontSize: v } }), (v) => `${v}px`)
       ]));
 
       const JP_FONTS = [

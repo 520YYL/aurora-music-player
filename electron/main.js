@@ -398,6 +398,17 @@ function initStores() {
     trace('settings migration: version 1 -> 2, rememberPosition=false');
   }
 
+  // 设置迁移：桌面歌词三行（正在唱 / 翻译 / 下一句）改成统一固定字号。
+  // 以前翻译按 0.62、下一句按 0.66 缩小，一屏里永远一大一小，看着像「字号跟着句子长短变」。
+  // 老配置里存着旧默认值 34，只改 defaults.js 对老用户无效，所以在这里一次性降到 26
+  // （三行同号后整体高度和原来差不多，但都小一点）。用 fontSizeMigrated 打标记，
+  // 用户之后自己在滑杆上调过就不会再被翻回来。
+  if (!settingsStore.get('lyrics.fontSizeMigrated', false)) {
+    if (Number(settingsStore.get('lyrics.fontSize', 26)) === 34) settingsStore.set('lyrics.fontSize', 26);
+    settingsStore.set('lyrics.fontSizeMigrated', true);
+    trace('settings migration: lyrics.fontSize 34 -> 26 (uniform desktop lyric size)');
+  }
+
   // 元数据解析规则升级（例如修正了标题/歌手顺序）后，丢弃旧缓存并自动重建一次曲库，
   // 否则用户会一直看到旧缓存里的错误结果。
   const metaVer = settingsStore.get('library.metaVersion', 1);

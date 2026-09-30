@@ -90,7 +90,11 @@
     document.documentElement.style.setProperty('--accentA', L.activeColor || '#7c5cff');
     document.documentElement.style.setProperty('--accentB', L.unsungColor || '#22d3ee');
 
-    const size = Math.max(14, Math.min(90, Number(L.fontSize) || 34));
+    // 三行歌词（正在唱 / 翻译 / 下一句）统一用这一个固定字号。
+    // 以前「翻译 / 下一句」是按当前句的比例缩小的（0.62 / 0.66），于是同一屏里
+    // 永远是一大一小两行字，看着就像「字号跟着句子长短在变」——
+    // 区分三者靠的是颜色和透明度，字号不参与区分，所以固定成一个值。
+    const size = Math.max(12, Math.min(90, Number(L.fontSize) || 26));
     const weight = Number(L.weight) || 700;
     const sh = L.shadow || {};
     const stroke = L.stroke || {};
@@ -114,11 +118,13 @@
       lineHeight: `${(size * 1.26).toFixed(1)}px`
     };
     Object.assign(el.cur.style, base);
+    // 翻译行与下一句：字号与当前句完全一致（固定），只用透明度区分主次
     Object.assign(el.tr.style, base, {
-      fontSize: `${Math.round(size * 0.62)}px`,
+      fontSize: `${size}px`,
+      opacity: '0.78',
       webkitTextStroke: (stroke.enabled && style !== 'minimal') ? `${(stroke.width || 1.2) * 0.7}px ${stroke.color || '#000'}` : '0px transparent'
     });
-    Object.assign(el.nxt.style, base, { fontSize: `${Math.round(size * 0.66)}px`, opacity: '0.5' });
+    Object.assign(el.nxt.style, base, { fontSize: `${size}px`, opacity: '0.5' });
 
     el.cur.style.fontFamily = fontFor('zh');
     el.tr.style.fontFamily = fontFor('zh');
@@ -666,8 +672,8 @@
     {
       const fsVal = document.createElement('span');
       fsVal.className = 'val';
-      fsVal.textContent = `${L.fontSize || 34}px`;
-      const r = srow('字号', range(14, 90, 1, L.fontSize || 34, (v) => {
+      fsVal.textContent = `${L.fontSize || 26}px`;
+      const r = srow('字号', range(12, 90, 1, L.fontSize || 26, (v) => {
         fsVal.textContent = `${v}px`;
         patchLyrics({ fontSize: v });
       }));
