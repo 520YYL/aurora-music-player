@@ -183,13 +183,14 @@
       deck.track = track;
       // 本地文件走 aurora://local/media；在线曲目（path 为空）走 aurora://local/stream，
       // 由主进程实时解析直链并按 Range 透传。
-      // track.source 决定走哪条通道：'bilibili'（默认）/ 'qq' / 'kuwo' / 'netease'
+      // track.source 决定走哪条通道：'bilibili'（默认）/ 'qq' / 'kugou' / 'netease'
       let url = '';
       if (track && track.path) {
         url = window.aurora.app.mediaUrl(track.path);
       } else if (track && track.online && track.videoId && window.aurora.online) {
-        // QQ 音乐只提供元数据，播放时要用歌名/歌手去别的音源找同曲，所以把线索一起带过去
-        const hint = track.source === 'qq'
+        // 聚合音源都带上歌名/歌手/时长：QQ 音乐靠它匹配别的平台出流，
+        // 酷狗/网易云靠它在原曲是会员/付费曲目时换到对面平台
+        const hint = track.source && track.source !== 'bilibili'
           ? { title: track.title, artist: track.artist, duration: track.duration }
           : null;
         url = window.aurora.online.streamUrl(track.videoId, track.source, hint);

@@ -86,7 +86,7 @@
 
     const cols = '34px 34px minmax(160px, 2.6fr) minmax(110px, 1.5fr) 62px 60px 108px 84px 78px';
 
-    /** 「我的收藏」页：本地收藏列表下面再接一段「在线收藏」（哔哩哔哩 / QQ音乐 / 酷我 / 网易云） */
+    /** 「我的收藏」页：本地收藏列表下面再接一段「在线收藏」（哔哩哔哩 / QQ音乐 / 酷狗 / 网易云） */
     function appendOnlineFavs() {
       if (!onlineFavs.length) return;
       // 收藏可能来自多个音源，按来源把数量汇总一下
@@ -285,15 +285,15 @@
         ce('button', { class: 'btn sm', text: '✏️ 编辑歌词', onclick: () => app.editLyrics() }),
         ce('button', { class: 'btn sm', text: app.lyrics.sourcePath ? '🔄 重新载入歌词' : '🔍 查找歌词', onclick: () => app.reloadLyrics(true) })
       ];
-      // 聚合音源（QQ音乐 / 酷我 / 网易云）用「在网页中搜索」代替
+      // 聚合音源（QQ音乐 / 酷狗 / 网易云）用「在网页中搜索」代替
       if (t.online && t.source !== 'bilibili') {
         const q = encodeURIComponent(`${t.title || ''} ${t.artist || ''}`.trim());
         const SITES = {
           qq: 'https://y.qq.com/n/ryqq/search?w=',
-          kuwo: 'https://www.kuwo.cn/search/list?key=',
+          kugou: 'https://www.kugou.com/yy/html/search.html#searchType=song&searchKeyWord=',
           netease: 'https://music.163.com/#/search/m/?s='
         };
-        const site = SITES[t.source] || SITES.kuwo;
+        const site = SITES[t.source] || SITES.netease;
         opsList.splice(1, 0, ce('button', {
           class: 'btn sm', text: `🌐 在${t.sourceName || '网页'}中查看`,
           onclick: () => window.aurora.app.openExternal(site + q)
@@ -365,7 +365,7 @@
     return el;
   }
 
-  /** 聚合音源每个 provider 的响应情况，例如「酷我音乐 32 首 · 网易云音乐 暂时不可用」 */
+  /** 聚合音源每个 provider 的响应情况，例如「酷狗音乐 32 首 · 网易云音乐 暂时不可用」 */
   function providerStatus(st) {
     const list = Array.isArray(st.providers) ? st.providers : [];
     if (!list.length) return null;
@@ -401,7 +401,7 @@
       tabs.appendChild(ce('button', {
         class: `btn sm${active ? ' primary' : ''}`,
         text: `${t.icon} ${t.label}`,
-        title: t.key === 'all' ? '聚合音源（QQ音乐 / 酷我音乐 / 网易云音乐），不包含哔哩哔哩' : '仅搜索哔哩哔哩',
+        title: t.key === 'all' ? '聚合音源（QQ音乐 / 酷狗音乐 / 网易云音乐），不包含哔哩哔哩' : '仅搜索哔哩哔哩',
         onclick: () => app.setOnlineTab(t.key)
       }));
     }
@@ -452,7 +452,7 @@
           html: st.query
             ? '换个关键词试试，或清空搜索框重新输入。'
             : (isAll
-              ? '在顶部搜索框输入关键词（例如「周杰伦 晴天」）后按回车，会同时搜索 QQ音乐、酷我音乐和网易云音乐。<br>结果会显示歌名、歌手、专辑、封面和时长，点击即可播放，播放时自动按需解析音频流。'
+              ? '在顶部搜索框输入关键词（例如「周杰伦 晴天」）后按回车，会同时搜索 QQ音乐、酷狗音乐和网易云音乐。<br>结果会显示歌名、歌手、专辑、封面和时长，点击即可播放，播放时自动按需解析音频流。'
               : '在顶部搜索框输入关键词（例如「周杰伦 晴天」）后按回车，即可搜索哔哩哔哩上的音频。<br>结果会显示歌名、歌手、UP主、封面和时长，点击即可播放，播放时自动按需解析音频流。')
         })
       ]));

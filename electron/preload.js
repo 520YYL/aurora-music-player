@@ -95,15 +95,15 @@ contextBridge.exposeInMainWorld('aurora', {
   // 在线音乐（哔哩哔哩 / 聚合音源，均为公开接口，无需 API Key / 无需服务器）
   online: {
     search: (query, limit) => invoke('online:search', query, limit),
-    // 「所有音乐」分栏：QQ音乐 + 酷我 + 网易云 聚合搜索
+    // 「所有音乐」分栏：QQ音乐 + 酷狗 + 网易云 聚合搜索
     searchAll: (query, limit) => invoke('online:searchAll', query, limit),
     // source 省略或为 'bilibili' 时走哔哩哔哩通道。
-    // QQ 音乐只给元数据不给直链，所以额外把「歌名 + 歌手 + 时长」编进 q= 参数，
-    // 主进程靠它去酷我/网易云匹配同一首歌（这样收藏里的 QQ 歌曲重启后也能播）。
+    // 聚合音源额外把「歌名 + 歌手 + 时长」编进 q= 参数：QQ 音乐靠它匹配别的平台出流，
+    // 酷狗/网易云靠它在原曲是会员/付费曲目时换到对面平台播放（收藏里的歌重启后也能播）。
     streamUrl: (videoId, source, hint) => {
       const s = source && source !== 'bilibili' ? `&s=${encodeURIComponent(source)}` : '';
       let extra = '';
-      if (source === 'qq' && hint && hint.title) {
+      if (source && source !== 'bilibili' && hint && hint.title) {
         const raw = [hint.title, hint.artist || '', Math.round(Number(hint.duration) || 0)].join('\u0001');
         extra = `&q=${Buffer.from(raw, 'utf8').toString('base64url')}`;
       }

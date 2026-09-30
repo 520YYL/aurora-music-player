@@ -256,7 +256,10 @@ async function resolveStream(bvid) {
   if (!audios.length) throw new Error('这条内容没有可用的音频流（可能是番剧 / 付费 / 已失效）');
 
   const best = audios.slice().sort((a, b) => (b.bandwidth || 0) - (a.bandwidth || 0))[0];
-  const url = best.baseUrl || best.base_url;
+  // B 站给一条 baseUrl + 若干 backupUrl。baseUrl 经常落在 P2P 节点（*.mcdn.bilivideo.cn:8082），
+  // 这个节点在不少网络下连接会被重置（ECONNRESET），所以优先挑普通 CDN（upos-*）的地址。
+  const cands = [best.baseUrl || best.base_url, ...((best.backupUrl || best.backup_url) || [])].filter(Boolean);
+  const url = cands.find((u) => !/\.mcdn\./i.test(u)) || cands[0];
   if (!url) throw new Error('音频直链为空');
   return { url, cid, itag: best.id, bandwidth: best.bandwidth || 0, codecs: best.codecs || '', title, up };
 }

@@ -219,7 +219,7 @@ async function handleAuroraRequest(req) {
     }
     // 在线音乐：音频流（支持 Range，可直接喂给 <audio>）
     //   ?v=<id>              哔哩哔哩（默认）
-    //   ?v=<id>&s=<provider>  聚合音源（qq / kuwo / netease）
+    //   ?v=<id>&s=<provider>  聚合音源（qq / kugou / netease）
     //   &q=<base64url>        QQ音乐专用：歌名\u0001歌手\u0001时长，用来去别的音源找同曲
     if (kind === 'stream') {
       const v = params.get('v');
@@ -249,9 +249,10 @@ async function handleAuroraRequest(req) {
       }
     }
     // 在线音乐：封面代理（避免放开 CSP 去直连外链图）
-    //   ?u=<图片直链>                哔哩哔哩 / 酷我（地址可直接拼出来）
+    //   ?u=<图片直链>                哔哩哔哩（地址可直接拼出来）
     //   ?s=netease&i=<pic_id>        网易云（真实地址要先解析一次）
     //   ?s=qq&i=<albumMid>           QQ音乐（地址可直接拼）
+    //   ?s=kugou&i=<host/path>       酷狗（接口给的是带 {size} 占位的模板）
     if (kind === 'thumb') {
       const u = params.get('u');
       const ts = params.get('s');
@@ -963,7 +964,7 @@ function setupIpc() {
 
   // 在线音乐（哔哩哔哩公开接口）：只暴露搜索，音频/封面走 aurora:// 协议
   handle('online:search', (evt, query, limit) => online.search(query, limit));
-  // 「所有音乐」分栏：聚合音源（酷我 / 网易云），并发查询、各自降级
+  // 「所有音乐」分栏：聚合音源（QQ音乐 / 酷狗 / 网易云），并发查询、各自降级
   handle('online:searchAll', (evt, query, limit) => aggregator.search(query, limit));
   handle('online:favorites', () => onlineFavStore.get('items', []));
   handle('online:setFavorites', (evt, list) => {

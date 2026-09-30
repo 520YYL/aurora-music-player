@@ -32,7 +32,7 @@
       coverStats: null,
       settings: null,
       // 在线音乐：两个分栏各自独立的状态，与本地曲库完全隔离，不污染 state.tracks
-      //   bili = 哔哩哔哩音源；all = 聚合音源（QQ音乐 / 酷我 / 网易云）
+      //   bili = 哔哩哔哩音源；all = 聚合音源（QQ音乐 / 酷狗 / 网易云）
       onlineTab: 'bili',
       online: { query: '', loading: false, error: '', tracks: [], providers: [] },
       onlineAll: { query: '', loading: false, error: '', tracks: [], providers: [] },
@@ -51,11 +51,12 @@
     const lib = await api.library.get();
     App.state.tracks = lib.tracks || [];
     App.state.playlists = await api.playlists.get();
-    // 在线收藏：读失败不影响启动。1.1.0 之前的记录没有 source，按哔哩哔哩补齐
+    // 在线收藏：读失败不影响启动。1.1.0 之前的记录没有 source，按哔哩哔哩补齐；
+    // 已经下线的音源（1.3.0 的「酷我」）直接跳过，免得点开只报「未知音源」
     try {
       const favs = await api.online.favorites();
       App.state.onlineFavs = Array.isArray(favs)
-        ? favs.filter((t) => t && t.videoId).map((t) => Object.assign({
+        ? favs.filter((t) => t && t.videoId && App.ONLINE_SOURCES.includes(t.source || 'bilibili')).map((t) => Object.assign({
           online: true, source: 'bilibili', sourceName: '哔哩哔哩',
           path: null, hasCover: false, favorite: true
         }, t))
@@ -457,13 +458,16 @@
   /**
    * 在线音乐有两个分栏：
    *   bili —— 哔哩哔哩音源（electron/online.js）
-   *   all  —— 所有音乐（聚合音源：QQ音乐 / 酷我 / 网易云，electron/aggregator.js）
+   *   all  —— 所有音乐（聚合音源：QQ音乐 / 酷狗 / 网易云，electron/aggregator.js）
    * 各自维护搜索状态，切换分栏不会互相清空。
    */
   App.ONLINE_TABS = [
     { key: 'bili', label: '哔哩哔哩音源', icon: '📺', hint: '来自哔哩哔哩 · 无需 API Key · 播放时实时解析音频流' },
-    { key: 'all', label: '所有音乐', icon: '🌐', hint: '来自 QQ音乐 / 酷我音乐 / 网易云音乐 · 不含哔哩哔哩 · 无需 API Key' }
+    { key: 'all', label: '所有音乐', icon: '🌐', hint: '来自 QQ音乐 / 酷狗音乐 / 网易云音乐 · 不含哔哩哔哩 · 无需 API Key' }
   ];
+
+  /** 当前支持的音源（含哔哩哔哩）；存档里的旧音源（例如已下线的酷我）靠它过滤掉 */
+  App.ONLINE_SOURCES = ['bilibili', 'qq', 'kugou', 'netease'];
 
   /** 当前分栏对应的搜索状态 */
   App.onlineState = function (tab) {

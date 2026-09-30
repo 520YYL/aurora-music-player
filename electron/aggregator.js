@@ -1,4 +1,7 @@
 'use strict';
+const { createHash } = require('crypto');
+const online = require('./online');
+
 /**
  * Aurora 极光音乐 —— 在线音乐聚合音源（「所有音乐」分栏）
  *
@@ -11,24 +14,31 @@
  *   qq        QQ音乐     u.y.qq.com/cgi-bin/musicu.fcg（官方搜索接口）+ y.qq.com（封面）
  *                        ⚠ QQ 从 2023 起对匿名客户端不再下发播放凭证（vkey 的 purl 恒为空，
  *                          result=104003），所以它只负责「搜索 + 元数据 + 封面」；
- *                          播放时按「歌名 + 歌手 + 时长」去酷我/网易云匹配同一首歌出流。
- *   kuwo      酷我音乐   search.kuwo.cn（搜索）+ antiserver.kuwo.cn（转直链）+ img4.kuwo.cn（封面）
+ *                          播放时按「歌名 + 歌手 + 时长」去酷狗/网易云匹配同一首歌出流。
+ *   kugou     酷狗音乐   songsearch.kugou.com（搜索）+ m.kugou.com / trackercdn（转直链）
+ *                        + imge.kugou.com（封面）；搜索接口会返回 Privilege / PayType，
+ *                        付费曲目拿不到地址，这时按「歌名 + 歌手」去网易云换一首能播的。
  *   netease   网易云音乐  music-api.gdstudio.xyz（公开聚合接口，搜索/直链/封面一把梭）
+ *
+ * 跨平台兜底顺序：酷狗 → 网易云 → 哔哩哔哩。用户搜的是主流华语歌时经常出现
+ * 「QQ 不给凭证 + 酷狗要会员 + 网易云没有版权」三连，所以最后一站落到 B 站
+ * （`electron/online.js` 那条链路，正版平台都不放时上面的完整版投稿往往还能放）。
  *
  * 所有请求都在 Electron 主进程里发出，渲染层只会拿到
  *   aurora://local/stream?v=<id>&s=<provider>   音频流（主进程带 Range 透传）
- *   aurora://local/thumb?u=<url>                封面（酷我直链）
+ *   aurora://local/thumb?u=<url>                封面（地址可直接拼出来的直链）
  *   aurora://local/thumb?s=netease&i=<pic_id>   封面（网易云需要先解析一次真实地址）
  *   aurora://local/thumb?s=qq&i=<albumMid>      封面（QQ 的地址可直接拼出来）
+ *   aurora://local/thumb?s=kugou&i=<host/path>  封面（酷狗给的是带 {size} 占位的模板）
  * 所以既不用放开 CSP，也没有跨域问题。
  */
 
-const KW_SEARCH = 'http://search.kuwo.cn/r.s';
-const KW_STREAM = 'http://antiserver.kuwo.cn/anti.s';
-const KW_IMG = 'https://img4.kuwo.cn/star/albumcover/';
 const GD_BASE = 'https://music-api.gdstudio.xyz/api.php';
 const QQ_FCG = 'https://u.y.qq.com/cgi-bin/musicu.fcg';
 const QQ_IMG = 'https://y.qq.com/music/photo_new/T002R300x300M000';
+const KG_SEARCH = 'https://songsearch.kugou.com/song_search_v2';
+const KG_STREAM = 'http://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash=';
+const KG_TRACKER = 'http://trackercdn.kugou.com/i/';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
@@ -46,7 +56,7 @@ const QQ_MIN_INTERVAL_MS = 1200;
 const QQ_MEMO_MAX = 400;
 
 /** provider key → 界面上显示的名字 */
-const PROVIDER_NAMES = { qq: 'QQ音乐', kuwo: '酷我音乐', netease: '网易云音乐' };
+const PROVIDER_NAMES = { qq: 'QQ音乐', kugou: '酷狗音乐', netease: '网易云音乐' };
 
 /* ==================================================================== */
 /* 小工具                                                                */
@@ -60,7 +70,7 @@ function fetchWithTimeout(url, options = {}, timeout = SEARCH_TIMEOUT_MS) {
   return fetch(url, opts);
 }
 
-/** 酷我返回的文本里带 &nbsp; 和 \\u0026 这类转义，统一洗干净 */
+/** 接口返回的文本里带 &nbsp; 和 \\u0026 这类转义，统一洗干净 */
 function cleanText(raw) {
   return String(raw == null ? '' : raw)
     .replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
@@ -72,31 +82,6 @@ function cleanText(raw) {
     .replace(/&gt;/gi, '>')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-/**
- * 酷我搜索接口返回的是单引号包起来的"JSON"，而且歌曲名里可能有英文撇号，
- * 直接 replace(/'/g,'"') 会把 Don't 这种名字弄坏。
- * 这里逐字符扫描，把单引号字符串转成合法的双引号 JSON 再解析。
- */
-function looseJsonParse(raw) {
-  let out = '';
-  let inStr = false;
-  let quote = '';
-  for (let i = 0; i < raw.length; i++) {
-    const c = raw[i];
-    if (inStr) {
-      if (c === '\\') { out += c + (raw[i + 1] || ''); i++; continue; }
-      if (c === quote) { inStr = false; out += '"'; continue; }
-      if (c === '"') { out += '\\"'; continue; }
-      out += c;
-    } else if (c === "'" || c === '"') {
-      inStr = true; quote = c; out += '"';
-    } else {
-      out += c;
-    }
-  }
-  return JSON.parse(out);
 }
 
 /** 去重用的归一化 key */
@@ -304,61 +289,118 @@ function pickBestMatch(list, meta) {
   return bestScore >= 4 ? best : null; // 至少「同名 + 同歌手」才算匹配上
 }
 
+/**
+ * 酷狗、网易云都没有可播放版本时的最后一站：哔哩哔哩。
+ * B 站的条目标题是视频标题（「周杰伦 - 晴天 无损音质」这类），所以匹配放宽成
+ * 「标题互相包含 + 歌手出现在标题或 UP 主里」，伴奏/翻唱/教程之类扣分。
+ */
+function biliPick(list, meta) {
+  const want = titleKey(meta.title);
+  if (!want) return null;
+  const artistKey = String(meta.artist || '').split(/\s*\/\s*/)[0].toLowerCase().replace(/\s+/g, '');
+  let best = null;
+  let bestScore = 0;
+  for (const it of list) {
+    if (!it || !it.videoId) continue;
+    const t = titleKey(it.title);
+    if (!t) continue;
+    let score = 0;
+    if (t === want) score += 4;
+    else if (t.includes(want)) score += 2.5;
+    else if (want.includes(t) && t.length >= 2) score += 1.5;
+    else continue;
+    const hay = `${it.title} ${it.artist || ''} ${it.uploader || ''}`.toLowerCase().replace(/\s+/g, '');
+    if (!artistKey || !hay.includes(artistKey)) continue;   // 歌手对不上就不要
+    score += 2;
+    if (JUNK_CJK.test(it.title) || JUNK_EN.test(it.title)) score -= 2.5;
+    if (score > bestScore) { bestScore = score; best = it; }
+  }
+  return bestScore >= 4 ? best : null;
+}
+
 /* ==================================================================== */
-/* provider: 酷我音乐（官方老接口，无需 cookie / 无需 key）                 */
+/* provider: 酷狗音乐（官方搜索 + 免签名播放接口）                          */
 /* ==================================================================== */
 
-async function kuwoSearch(query, want) {
-  const pages = Math.max(1, Math.min(5, Math.ceil(want / 30)));
+/** 酷狗封面模板里的 `{size}` 占位符换成这个边长 */
+const KG_PIC_SIZE = '240';
+/** 酷狗两次取流之间留一点间隔，别把自己打到风控 */
+const KG_MIN_INTERVAL_MS = 400;
+
+let kgGate = Promise.resolve();
+let kgNextAt = 0;
+
+function kgSchedule(fn) {
+  const run = kgGate.then(async () => {
+    const wait = kgNextAt - Date.now();
+    if (wait > 0) await sleep(wait);
+    kgNextAt = Date.now() + KG_MIN_INTERVAL_MS;
+    return fn();
+  });
+  kgGate = run.then(() => {}, () => {});
+  return run;
+}
+
+/** 搜索结果里的 FileName 形如「周杰伦 - 晴天」，优先用 SongName，取不到再从 FileName 里剥掉歌手前缀 */
+function kgTitle(it, singer) {
+  const direct = cleanText(it.SongName || it.OriSongName || '');
+  if (direct) return direct;
+  let name = cleanText(it.FileName || '');
+  const s = cleanText(singer);
+  if (s && name.startsWith(s)) name = name.slice(s.length).replace(/^\s*[-–—]\s*/, '');
+  return name.trim();
+}
+
+/** `http://imge.kugou.com/stdmusic/{size}/a/b.jpg` → `imge.kugou.com/stdmusic/240/a/b.jpg`（放进 URL 参数里会短一些） */
+function kgPicRef(tpl) {
+  const s = String(tpl || '').replace('{size}', KG_PIC_SIZE).replace(/^https?:\/\//i, '');
+  return /^[A-Za-z0-9.\-]+\/[^?#\s]+\.(?:jpg|jpeg|png|webp)$/i.test(s) ? s : '';
+}
+
+async function kugouSearch(query, want) {
+  const total = Math.max(1, Math.min(60, want));
   const out = [];
-  for (let pn = 0; pn < pages; pn++) {
-    const rn = Math.min(30, want - out.length);
-    if (rn <= 0) break;
-    const qs = `?all=${encodeURIComponent(query)}&ft=music&itemset=web_2013&client=kt`
-      + `&pn=${pn}&rn=${rn}&rformat=json&encoding=utf8`
-      + '&show_copyright_off=0&pcmp4=1&mobi=1&vipver=MUSIC_9.1.1.2';
-    let body;
+  for (let page = 1; out.length < total && page <= 3; page++) {
+    const size = Math.min(30, total - out.length);
+    if (size <= 0) break;
+    const qs = `?keyword=${encodeURIComponent(query)}&page=${page}&pagesize=${size}`
+      + '&platform=WebFilter&userid=-1&clientver=2000&filter=2&iscorrection=1&privilege_filter=0';
+    let list = [];
     try {
-      const r = await fetchWithTimeout(KW_SEARCH + qs, { headers: { 'User-Agent': UA, Referer: 'http://www.kuwo.cn/' } });
-      if (!r.ok) throw new Error(`酷我搜索返回 HTTP ${r.status}`);
-      body = await r.text();
+      const r = await fetchWithTimeout(KG_SEARCH + qs, { headers: { 'User-Agent': UA, Referer: 'https://www.kugou.com/' } });
+      if (!r.ok) throw new Error(`酷狗搜索返回 HTTP ${r.status}`);
+      const j = await r.json();
+      list = (j && j.data && j.data.lists) || [];
     } catch (err) {
       if (!out.length) throw err; // 一条都没有才算失败，翻页失败就用已有结果
       break;
     }
-    let data;
-    try {
-      data = looseJsonParse(body);
-    } catch {
-      if (!out.length) throw new Error('酷我返回的数据解析失败');
-      break;
-    }
-    const list = Array.isArray(data.abslist) ? data.abslist : [];
     if (!list.length) break;
     for (const it of list) out.push(it);
-    if (list.length < rn) break;
+    if (list.length < size) break;
   }
 
   return out.map((it) => {
-    const rid = String(it.MUSICRID || it.MP3RID || '').replace(/^MUSIC_/, '');
-    const pic = it.web_albumpic_short ? KW_IMG + String(it.web_albumpic_short).replace(/^\//, '') : '';
-    const formats = String(it.FORMATS || '');
-    const fmt = /ALFLAC|FLAC/i.test(formats) ? 'FLAC' : /MP3H/i.test(formats) ? '320K' : 'MP3';
-    const artist = cleanText(it.ARTIST || it.AARTIST);
+    const hash = String(it.FileHash || '');
+    const singer = cleanText(it.SingerName || '').replace(/\s*、\s*/g, ' / ');
+    // Privilege/PayType 都为 0 才是匿名可直接播放的；付费曲目仍然列出来（元数据更全），
+    // 点击时由 resolveKugouStream 换到网易云出流。
+    const paywalled = !(Number(it.Privilege) === 0 && Number(it.PayType) === 0);
+    const suffix = String(it.ExtName || '').toLowerCase();
     return {
-      id: `on_kuwo_${rid}`,
-      videoId: rid,
-      source: 'kuwo',
-      sourceName: '酷我',
-      title: cleanText(it.SONGNAME || it.NAME),
-      artist: artist || '未知',
-      album: cleanText(it.ALBUM),
-      uploader: artist,
-      duration: (Number(it.DURATION) || 0) * 1000, // 接口给的是秒，转成毫秒
-      format: fmt,
-      thumbnail: pic,
-      thumbRef: null,
-      vip: String(it.PAY) === '1'
+      id: `on_kugou_${hash}`,
+      videoId: hash,
+      source: 'kugou',
+      sourceName: '酷狗',
+      title: kgTitle(it, it.SingerName),
+      artist: singer || '未知',
+      album: cleanText(it.AlbumName),
+      uploader: singer,
+      duration: (Number(it.Duration) || 0) * 1000, // 接口给的是秒，转成毫秒
+      format: suffix === 'flac' ? 'FLAC' : (Number(it.Bitrate) >= 320 ? '320K' : 'MP3'),
+      thumbnail: '',
+      thumbRef: kgPicRef(it.Image) ? { source: 'kugou', id: kgPicRef(it.Image) } : null,
+      vip: paywalled
     };
   }).filter((x) => x.videoId && x.title);
 }
@@ -370,11 +412,11 @@ async function kuwoSearch(query, want) {
 const PROVIDERS = {
   qq: qqSearch,
   netease: neteaseSearch,
-  kuwo: kuwoSearch
+  kugou: kugouSearch
 };
 // 去重时按这个顺序保留：同一首歌优先显示 QQ 音乐的元数据（专辑/时长/封面更齐），
-// 播放时再自动换到酷我/网易云出流；QQ 挂了或没这首歌，就由酷我顶上。
-const PROVIDER_ORDER = ['qq', 'kuwo', 'netease'];
+// 播放时再自动换到酷狗/网易云出流；QQ 挂了或没这首歌，就由酷狗顶上。
+const PROVIDER_ORDER = ['qq', 'kugou', 'netease'];
 
 /** 翻唱/伴奏/DJ 之类的水货标记，用来把它们沉到正版后面 */
 const JUNK_CJK = /伴奏|翻唱|钢琴|纯音乐|铃声|片段|试听|现场|演唱会|混音|抖音|童声|竖琴|吉他版|尤克里里|口琴|八音盒/;
@@ -465,15 +507,37 @@ async function search(query, limit = 40) {
 /* 取播放直链                                                            */
 /* ==================================================================== */
 
-async function resolveKuwoUrl(rid) {
-  const r = await fetchWithTimeout(
-    `${KW_STREAM}?type=convert_url&rid=MUSIC_${encodeURIComponent(rid)}&format=mp3&response=url`,
-    { headers: { 'User-Agent': UA, Referer: 'http://www.kuwo.cn/' } },
-    SEARCH_TIMEOUT_MS
-  );
-  const txt = (await r.text()).trim();
-  if (!/^https?:\/\//i.test(txt)) throw new Error('酷我没有返回播放地址：' + txt.slice(0, 60));
-  return txt;
+/** 酷狗拿不到播放地址时接口会回 status:0 / err_code，或者干脆没有 url 字段 */
+async function resolveKugouUrl(hash) {
+  const h = String(hash || '').trim();
+  if (!/^[A-Za-z0-9]{16,40}$/.test(h)) throw new Error('酷狗曲目标识不正确');
+  const err = new Error('酷狗没有返回播放地址（可能是会员/付费曲目）');
+  err.restricted = true;
+
+  // 通道一：移动端老接口，免签名，实测可直接出直链
+  try {
+    const r = await kgSchedule(() => fetchWithTimeout(
+      KG_STREAM + encodeURIComponent(h),
+      { headers: { 'User-Agent': UA, Referer: 'https://www.kugou.com/' } },
+      SEARCH_TIMEOUT_MS
+    ));
+    const j = await r.json();
+    if (j && typeof j.url === 'string' && /^https?:\/\//i.test(j.url)) return j.url;
+  } catch { /* 换下一个通道 */ }
+
+  // 通道二：trackercdn v1（key 是 hash + 固定盐的 md5）
+  try {
+    const key = createHash('md5').update(h + 'kgcloud').digest('hex');
+    const r = await kgSchedule(() => fetchWithTimeout(
+      `${KG_TRACKER}?cmd=4&hash=${encodeURIComponent(h)}&key=${key}&pid=1&forceDown=0&vip=1`,
+      { headers: { 'User-Agent': UA, Referer: 'https://www.kugou.com/' } },
+      SEARCH_TIMEOUT_MS
+    ));
+    const j = await r.json();
+    if (j && typeof j.url === 'string' && /^https?:\/\//i.test(j.url)) return j.url;
+  } catch { /* 两个通道都不行 */ }
+
+  throw err;
 }
 
 async function resolveNeteaseUrl(id) {
@@ -484,7 +548,63 @@ async function resolveNeteaseUrl(id) {
 }
 
 /**
- * QQ 音乐不给匿名客户端播放凭证，所以这里按「歌名 + 歌手 + 时长」去酷我/网易云
+ * 版权/会员受限、或平台本身不放流时，拿「歌名 + 歌手 + 时长」去另一个平台找同一首歌出流。
+ * @returns {Promise<{url:string, via:string}|null>}
+ */
+async function crossResolve(meta, except) {
+  if (!meta || !meta.title) return null;
+  const firstArtist = String(meta.artist || '').split(/\s*\/\s*/)[0];
+  // 搜索词用「去掉括号后缀的歌名 + 第一歌手」：榜单里常出现
+  // 「晴天 (2017周杰伦地表最强演唱会台北站)」这种长标题，整串丢给搜索接口会一条都搜不到
+  const shortTitle = String(meta.title || '').replace(/[（(\[【][^)）\]】]*[)）\]】]/g, '').trim() || String(meta.title || '');
+  const query = `${shortTitle} ${firstArtist}`.trim();
+  for (const src of ['kugou', 'netease']) {
+    if (src === except) continue;
+    try {
+      const list = src === 'kugou' ? await kugouSearch(query, 15) : await neteaseSearch(query, 15);
+      // 优先挑「能直接放」的那条：酷狗付费曲目拿不到地址，别浪费一次请求
+      const hit = pickBestMatch(list.filter((x) => !x.vip), meta) || pickBestMatch(list, meta);
+      if (!hit) continue;
+      const url = src === 'kugou' ? await resolveKugouUrl(hit.videoId) : await resolveNeteaseUrl(hit.videoId);
+      return { url, via: src };
+    } catch { /* 这个平台也不行，换下一个 */ }
+  }
+
+  // 最后一站：哔哩哔哩。正版平台都不给放时，B 站上的「完整版 / 无损」投稿往往还能放。
+  try {
+    const r = await online.search(query, 20);
+    const hit = biliPick(r.items || [], meta);
+    if (hit) return { bvid: hit.videoId, via: 'bilibili' };
+  } catch { /* B 站也不行就算了 */ }
+
+  return null;
+}
+
+async function resolveKugouStream(hash, hint) {
+  try {
+    return { url: await resolveKugouUrl(hash), via: 'kugou' };
+  } catch (err) {
+    if (!err || !err.restricted) throw err;
+    // 典型情况：酷狗这首是会员/付费曲目匿名拿不到地址，那就换网易云放同一首歌
+    const alt = await crossResolve(hint, 'kugou');
+    if (alt) return alt;
+    const name = (hint && hint.title) || '这首歌曲';
+    throw new Error(`《${name}》在酷狗是会员/付费曲目，网易云和哔哩哔哩也没有找到可播放的版本`);
+  }
+}
+
+async function resolveNeteaseStream(id, hint) {
+  try {
+    return { url: await resolveNeteaseUrl(id), via: 'netease' };
+  } catch (err) {
+    const alt = await crossResolve(hint, 'netease');
+    if (alt) return alt;
+    throw err;
+  }
+}
+
+/**
+ * QQ 音乐不给匿名客户端播放凭证，所以这里按「歌名 + 歌手 + 时长」去酷狗/网易云
  * 找同一首歌来出流。两边都找不到就明确报错，不做静默降级。
  */
 async function resolveQqStream(mid, hint) {
@@ -493,28 +613,16 @@ async function resolveQqStream(mid, hint) {
     || (hint && hint.title ? { title: hint.title, artist: hint.artist || '', duration: Number(hint.duration) || 0 } : null);
   if (!meta) throw new Error('QQ音乐：这首曲目的信息已失效，请重新搜索后再播放');
 
-  const firstArtist = String(meta.artist || '').split(/\s*\/\s*/)[0];
-  const query = `${meta.title} ${firstArtist}`.trim();
+  const alt = await crossResolve(meta, 'qq');
+  if (alt) return alt;
 
-  try {
-    const list = await kuwoSearch(query, 10);
-    const hit = pickBestMatch(list, meta);
-    if (hit) return { url: await resolveKuwoUrl(hit.videoId), via: 'kuwo' };
-  } catch { /* 换下一个音源 */ }
-
-  try {
-    const list = await neteaseSearch(query, 10);
-    const hit = pickBestMatch(list, meta);
-    if (hit) return { url: await resolveNeteaseUrl(hit.videoId), via: 'netease' };
-  } catch { /* 都没有就报错 */ }
-
-  throw new Error(`QQ音乐：《${meta.title}》在酷我/网易云里没有找到可播放的版本`);
+  throw new Error(`QQ音乐：《${meta.title}》在酷狗/网易云/哔哩哔哩里没有找到可播放的版本`);
 }
 
 /** @returns {Promise<{url: string, via: string}>} via 是真正出流的平台，决定请求头 */
 async function resolveStreamUrl(source, id, hint) {
-  if (source === 'kuwo') return { url: await resolveKuwoUrl(id), via: 'kuwo' };
-  if (source === 'netease') return { url: await resolveNeteaseUrl(id), via: 'netease' };
+  if (source === 'kugou') return resolveKugouStream(id, hint);
+  if (source === 'netease') return resolveNeteaseStream(id, hint);
   if (source === 'qq') return resolveQqStream(id, hint);
   throw new Error('未知音源：' + source);
 }
@@ -530,7 +638,12 @@ async function getStreamInfo(source, id, hint) {
 
   const task = (async () => {
     const resolved = await resolveStreamUrl(source, id, hint);
-    const info = { url: resolved.url, via: resolved.via, exp: Date.now() + STREAM_TTL_MS };
+    const info = {
+      url: resolved.url || '',
+      via: resolved.via,
+      bvid: resolved.bvid || '',          // via=bilibili 时用它走 B 站那条链路
+      exp: Date.now() + STREAM_TTL_MS
+    };
     cacheSet(streamCache, key, info, STREAM_CACHE_MAX);
     return info;
   })();
@@ -550,7 +663,7 @@ function rangeOf(req) {
 
 async function fetchUpstream(url, req, via) {
   const headers = { 'User-Agent': UA };
-  if (via === 'kuwo') headers.Referer = 'http://www.kuwo.cn/';
+  if (via === 'kugou') headers.Referer = 'https://www.kugou.com/';
   if (via === 'netease') headers.Referer = 'https://music.163.com/';
   const range = rangeOf(req);
   if (range) headers.Range = range;
@@ -582,6 +695,17 @@ async function streamResponse(source, id, req, hint) {
   const key = `${source}:${id}`;
 
   let info = await getStreamInfo(source, id, hint);
+
+  // 兜底到哔哩哔哩的曲目：交给 B 站那条链路（要有 buvid3 cookie、Referer 也不一样）
+  if (info.via === 'bilibili' && info.bvid) {
+    try {
+      return await online.streamResponse(info.bvid, req);
+    } catch (err) {
+      streamCache.delete(key);            // 直链过期 / 视频被删，下次点重新解析
+      throw err;
+    }
+  }
+
   let up = await fetchUpstream(info.url, req, info.via);
 
   if (up.status === 403 || up.status === 404 || up.status === 410) {
@@ -596,7 +720,7 @@ async function streamResponse(source, id, req, hint) {
 }
 
 /* ==================================================================== */
-/* 封面代理（网易云的封面地址要先解析一次，QQ 的可以直接拼）               */
+/* 封面代理（网易云的封面地址要先解析一次，QQ / 酷狗 的可以直接拼）        */
 /* ==================================================================== */
 
 async function imageResponse(source, id) {
@@ -620,6 +744,14 @@ async function imageResponse(source, id) {
     if (!albumMid) throw new Error('QQ音乐封面参数不正确');
     url = QQ_IMG + albumMid + '.jpg';
     referer = 'https://y.qq.com/';
+  } else if (source === 'kugou') {
+    // id 就是「host/路径」形式，只允许图片站，别让它变成任意请求
+    const ref = String(id || '');
+    if (!/^[A-Za-z0-9.\-]+\/[^?#\s]+\.(?:jpg|jpeg|png|webp)$/i.test(ref)) {
+      throw new Error('酷狗封面参数不正确');
+    }
+    url = 'http://' + ref;
+    referer = 'https://www.kugou.com/';
   } else {
     throw new Error('该音源不需要代理封面：' + source);
   }
