@@ -8,6 +8,10 @@
   const D = window.AURORA_DEFAULTS;
   const PR = window.AURORA_PRESETS;
 
+  // 统计页当前可见的图表重画函数（窗口缩放 / 进出全屏时重画，避免被拉伸变形）
+  let statsRedraw = null;
+  window.addEventListener('resize', () => { if (typeof statsRedraw === 'function') statsRedraw(); });
+
   /* -------------------------- 通用小工具 -------------------------- */
   function section(title, desc) {
     const el = ce('div', { class: 'set-sec panel' });
@@ -92,35 +96,95 @@
     ]);
     body.appendChild(goalRow);
 
-    // 图表
-    const c1 = ce('canvas', { class: 'chart' });
-    const c2 = ce('canvas', { class: 'chart' });
-    const c3 = ce('canvas', { class: 'chart' });
-    body.appendChild(ce('div', { class: 'chart-wrap panel' }, [ce('h3', { text: '最近 30 天每日听歌时长' }), c1]));
-    body.appendChild(ce('div', { class: 'chart-wrap panel' }, [ce('h3', { text: '最近 12 个月每月听歌时长' }), c2]));
-    body.appendChild(ce('div', { class: 'chart-wrap panel' }, [ce('h3', { text: '按年统计' }), c3]));
+    // ---- 听歌时长图表：天 / 周 / 月 / 年 四档任选（只画一张，不排成长条）----
+    const RANGES = [
+      { key: 'day', label: '天', hint: '最近 30 天 · 每天听歌时长' },
+      { key: 'week', label: '周', hint: '最近 12 周 · 每周听歌时长' },
+      { key: 'month', label: '月', hint: '最近 12 个月 · 每月听歌时长' },
+      { key: 'year', label: '年', hint: '按年统计听歌时长' }
+    ];
+    let range = (app.settings.stats && app.settings.stats.range) || 'day';
+    if (!RANGES.some((r) => r.key === range)) range = 'day';
 
-    // 每首歌累计时长排行
-    const rank = (app.state.tracks || []).map((t) => ({ t, ms: app.trackPlayedMs(t.id) }))
-      .filter((x) => x.ms > 0).sort((a, b) => b.ms - a.ms);
+    const seg = ce('div', { class: 'seg' });
+    const chartTitle = ce('h3', {});
+    const chart = ce('canvas', { class: 'chart' });
+    const chartCard = ce('div', { class: 'chart-wrap panel' }, [
+      ce('div', { class: 'chart-head' }, [chartTitle, seg]),
+      chart
+    ]);
+    body.appendChild(chartCard);
+
+    const series = () => {
+      if (range === 'week') return { data: sum.weeks || [], label: (d) => `${d.week.slice(5)} 起`, name: '最近 12 周每周听歌时长', unit: '周' };
+      if (range === 'month') return { data: sum.months || [], label: (d) => d.month, name: '最近 12 个月每月听歌时长', unit: '个月' };
+      if (range === 'year') return { data: sum.years || [], label: (d) => `${d.year} 年`, name: '按年统计听歌时长', unit: '年' };
+      return { data: sum.last30 || [], label: (d) => d.day.slice(5), name: '最近 30 天每日听歌时长', unit: '天' };
+    };
+
+    const redraw = () => {
+      const { data, label, name, unit } = series();
+      const total = data.reduce((a, b) => a + (b.ms || 0), 0);
+      const active = data.filter((d) => (d.ms || 0) > 0).length;
+      chartTitle.textContent = `${name} · 合计 ${U.fmtLong(total)}${active ? ` · ${active} ${unit}有记录` : ''}`;
+      for (const b of seg.children) b.classList.toggle('primary', b.dataset.k === range);
+      statsRedraw = () => drawChart(chart, data, label);
+      setTimeout(() => { if (chart.isConnected) drawChart(chart, data, label); }, 0);
+    };
+
+    for (const r of RANGES) {
+      seg.appendChild(ce('button', {
+        class: `btn sm${r.key === range ? ' primary' : ''}`, 'data-k': r.key, text: r.label, title: r.hint,
+        onclick: () => { range = r.key; app.saveSettings({ stats: { ...app.settings.stats, range } }); redraw(); }
+      }));
+    }
+
+    // ---- 每首歌累计时长排行：本地曲库 + 统计里记录过的在线曲目（含「我的收藏」里的在线歌）----
+    const SRC_NAME = { qq: 'QQ音乐', kugou: '酷狗音乐', netease: '网易云音乐', bilibili: '哔哩哔哩' };
+    const localById = new Map((app.state.tracks || []).map((t) => [t.id, t]));
+    const favById = new Map((app.state.onlineFavs || []).map((t) => [t.id, t]));
+    const rank = [];
+    for (const [id, rec] of Object.entries(sum.tracks || {})) {
+      const ms = (rec && rec.ms) || 0;
+      if (ms <= 0) continue;
+      const local = localById.get(id);
+      if (local) {
+        rank.push({ t: local, ms, count: local.playCount || (rec && rec.count) || 0, last: local.lastPlayedAt || (rec && rec.last) || 0, online: false, play: local });
+        continue;
+      }
+      // 在线曲目不在本地曲库里：先用「我的收藏」里的条目补名字，其次用统计记录里存下来的标题
+      const fav = favById.get(id);
+      const title = (fav && (fav.title || fav.name)) || (rec && rec.title) || id;
+      const artist = (fav && fav.artist) || (rec && rec.artist) || '—';
+      const source = (fav && fav.source) || (rec && rec.source) || '';
+      rank.push({
+        t: { id, title, artist, sourceName: (fav && fav.sourceName) || SRC_NAME[source] || '在线' },
+        ms, count: (rec && rec.count) || 0, last: (rec && rec.last) || 0, online: true, play: fav || null
+      });
+    }
+    rank.sort((a, b) => b.ms - a.ms);
+
+    const onlineCount = rank.filter((x) => x.online).length;
     const rankBox = ce('div', { class: 'chart-wrap panel' });
-    rankBox.appendChild(ce('h3', { text: `每首歌累计听歌时长（${rank.length} 首有记录）` }));
+    rankBox.appendChild(ce('h3', { text: `每首歌累计听歌时长（${rank.length} 首有记录${onlineCount ? ` · 含 ${onlineCount} 首在线` : ''}）` }));
     if (!rank.length) {
       rankBox.appendChild(ce('div', { class: 'muted', style: { fontSize: '12.5px', padding: '10px 0' }, text: '还没有听歌记录，播放几首后这里会出现排行。' }));
     } else {
+      const COLS = '46px minmax(170px,2.4fr) minmax(100px,1.4fr) 84px 120px 96px 110px';
       const tbl = ce('div', {});
-      const hd = ce('div', { class: 'track-head', style: { '--cols': '46px minmax(180px,2.4fr) minmax(100px,1.4fr) 130px 100px 110px', position: 'static' } });
-      for (const l of ['#', '歌曲', '歌手', '累计听歌', '播放次数', '上次播放']) hd.appendChild(ce('div', { text: l }));
+      const hd = ce('div', { class: 'track-head', style: { '--cols': COLS, position: 'static' } });
+      for (const l of ['#', '歌曲', '歌手', '来源', '累计听歌', '播放次数', '上次播放']) hd.appendChild(ce('div', { text: l }));
       tbl.appendChild(hd);
       rank.slice(0, 100).forEach((x, i) => {
-        const r = ce('div', { class: 'track-row', style: { '--cols': '46px minmax(180px,2.4fr) minmax(100px,1.4fr) 130px 100px 110px', cursor: 'pointer' } });
+        const r = ce('div', { class: 'track-row', style: { '--cols': COLS, cursor: x.play ? 'pointer' : 'default' } });
         r.appendChild(ce('div', { class: 't-idx', text: String(i + 1) }));
-        r.appendChild(ce('div', { class: 't-title ellipsis', text: x.t.title || x.t.name }));
+        r.appendChild(ce('div', { class: 't-title ellipsis', text: x.t.title || x.t.name || x.t.id }));
         r.appendChild(ce('div', { class: 't-cell', text: x.t.artist || '—' }));
+        r.appendChild(ce('div', { class: 't-cell', text: x.online ? `🌐 ${x.t.sourceName || '在线'}` : '💾 本地' }));
         r.appendChild(ce('div', { class: 't-cell', style: { color: 'var(--accent)', fontWeight: '700' }, text: U.fmtLong(x.ms) }));
-        r.appendChild(ce('div', { class: 't-cell', text: `${x.t.playCount || 0} 次` }));
-        r.appendChild(ce('div', { class: 't-cell', text: x.t.lastPlayedAt ? U.fmtDateTime(x.t.lastPlayedAt) : '—' }));
-        r.onclick = () => app.playTrack(x.t);
+        r.appendChild(ce('div', { class: 't-cell', text: `${x.count || 0} 次` }));
+        r.appendChild(ce('div', { class: 't-cell', text: x.last ? U.fmtDateTime(x.last) : '—' }));
+        if (x.play) r.onclick = () => app.playTrack(x.play);
         tbl.appendChild(r);
       });
       rankBox.appendChild(tbl);
@@ -128,7 +192,7 @@
     body.appendChild(rankBox);
     wrap.appendChild(body);
 
-    setTimeout(() => { drawChart(c1, sum.last30 || [], (d) => d.day.slice(5)); drawChart(c2, sum.months || [], (d) => d.month); drawChart(c3, sum.years || [], (d) => d.year + ' 年'); }, 30);
+    redraw();
     return wrap;
   }
 

@@ -402,7 +402,21 @@
       this._pendingPlayIncrement = false;
       if (!this.current) return;
       if (ms < 500 && !inc) return;
-      const entry = { id: this.current.id, ms: Math.max(ms, inc ? 1 : 0), day: U.dayKey(), incrementPlay: inc };
+      const t = this.current;
+      const entry = {
+        id: t.id,
+        ms: Math.max(ms, inc ? 1 : 0),
+        day: U.dayKey(),
+        incrementPlay: inc,
+        // 曲目信息一起上报：在线曲目 / 「我的收藏」里的在线歌不在本地曲库里，
+        // 统计页只有靠这些字段才显示得出歌名歌手。
+        title: t.title || t.name || '',
+        artist: t.artist || '',
+        album: t.album || '',
+        source: t.source || '',
+        online: !!t.online,
+        duration: t.duration || 0
+      };
       window.aurora.stats.add([entry]).catch(() => {});
       this.emit('stats-flush', entry);
     }

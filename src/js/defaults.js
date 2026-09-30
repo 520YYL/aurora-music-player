@@ -134,7 +134,8 @@
       enabled: true,
       countOnlyPlayed: true,   // 只在真正播放计入
       minSeconds: 5,           // 单曲少于该秒数不计入
-      dailyGoalMinutes: 60
+      dailyGoalMinutes: 60,
+      range: 'day'             // 统计图表的默认粒度：day | week | month | year
     },
 
     ui: {

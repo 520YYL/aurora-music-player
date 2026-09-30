@@ -735,6 +735,13 @@ function todayKey(d = new Date()) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/** 「周」以周一为一周起点，返回该周周一的日期键（YYYY-MM-DD） */
+function weekKey(d = new Date()) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return todayKey(x);
+}
+
 function addStats(entries) {
   const stats = statsStore.get();
   if (!stats.days) stats.days = {};
@@ -751,10 +758,19 @@ function addStats(entries) {
     if (e.id) {
       d.tracks[e.id] = (d.tracks[e.id] || 0) + ms;
       if (!stats.tracks[e.id]) stats.tracks[e.id] = { ms: 0, count: 0, last: 0 };
-      stats.tracks[e.id].ms += ms;
+      const rec = stats.tracks[e.id];
+      rec.ms += ms;
+      // 顺手记住曲目信息：在线曲目（含「我的收藏」里的在线歌）不在本地曲库里，
+      // 只有把标题/歌手一起存下来，统计页的排行才显示得出名字。
+      if (e.title) rec.title = e.title;
+      if (e.artist) rec.artist = e.artist;
+      if (e.album) rec.album = e.album;
+      if (e.source) rec.source = e.source;
+      if (e.duration) rec.duration = e.duration;
+      if (e.online !== undefined) rec.online = !!e.online;
       if (e.incrementPlay) {
-        stats.tracks[e.id].count += 1;
-        stats.tracks[e.id].last = Date.now();
+        rec.count += 1;
+        rec.last = Date.now();
         const lib = libraryStore.get('tracks', []);
         const t = lib.find((x) => x.id === e.id);
         if (t) { t.playCount = (t.playCount || 0) + 1; t.lastPlayedAt = Date.now(); libraryStore.set('tracks', lib); }
@@ -781,6 +797,7 @@ function computeStatsSummary() {
   const last30 = [];
   const byMonth = {};
   const byYear = {};
+  const byWeek = {};
 
   const dayMs = (k) => (days[k] && days[k].ms) || 0;
 
@@ -795,6 +812,8 @@ function computeStatsSummary() {
     byMonth[ym] = (byMonth[ym] || 0) + ms;
     const y = k.slice(0, 4);
     byYear[y] = (byYear[y] || 0) + ms;
+    const wk = weekKey(new Date(`${k}T00:00:00`));
+    byWeek[wk] = (byWeek[wk] || 0) + ms;
   }
 
   for (let i = 29; i >= 0; i--) {
@@ -802,6 +821,14 @@ function computeStatsSummary() {
     d.setDate(d.getDate() - i);
     const k = todayKey(d);
     last30.push({ day: k, ms: dayMs(k) });
+  }
+
+  const weeks = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i * 7);
+    const k = weekKey(d);
+    weeks.push({ week: k, ms: byWeek[k] || 0 });
   }
 
   const months = [];
@@ -830,6 +857,7 @@ function computeStatsSummary() {
     monthAverageCalendar: Math.round(monthMs / Math.max(1, daysInMonthSoFar)),
     yearAverageCalendar: Math.round(yearMs / Math.max(1, dayOfYear)),
     last30,
+    weeks,
     months,
     years,
     tracks: stats.tracks || {},

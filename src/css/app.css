@@ -326,6 +326,13 @@
 .chart-wrap { padding: 14px 16px; margin-bottom: 16px; }
 .chart-wrap h3 { margin: 0 0 10px; font-size: 13.5px; }
 canvas.chart { width: 100%; height: 172px; display: block; }
+/* 天 / 周 / 月 / 年 四档切换（不把三张图排成长条） */
+.chart-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.chart-head h3 { margin: 0; flex: 1; min-width: 200px; }
+.seg { display: inline-flex; gap: 4px; padding: 3px; border-radius: 10px; background: color-mix(in srgb, var(--text) 9%, transparent); }
+.seg .btn.sm { min-width: 38px; justify-content: center; padding: 4px 10px; background: transparent; border-color: transparent; box-shadow: none; }
+.seg .btn.sm:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.seg .btn.sm.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); border-color: transparent; color: #fff; }
 .goal-bar { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--text) 14%, transparent); overflow: hidden; margin-top: 8px; }
 .goal-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
 
