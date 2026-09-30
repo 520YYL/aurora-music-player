@@ -135,6 +135,17 @@
     }
     .sbtn:hover { background: rgba(255, 255, 255, .18); }
     .sbtn.wide { flex: 1; text-align: center; }
+    /* 自绘取色器：色块按钮 + 展开在面板里的三根滑杆。
+       不用 input[type=color] 是因为它弹的是 Chromium 原生取色窗口 —— 那是独立的
+       系统窗口，压不过 alwaysOnTop 的歌词浮层，点开会被面板盖住。 */
+    .cpbtn { width: 38px; height: 24px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, .3); cursor: pointer; }
+    .cpbtn:hover { border-color: rgba(255, 255, 255, .65); }
+    .cpbtn.on { border-color: #fff; box-shadow: 0 0 0 2px rgba(124, 92, 255, .45); }
+    .cpbox { border: 1px solid rgba(255, 255, 255, .14); border-radius: 10px; padding: 9px 9px 3px; margin: 0 0 8px; background: rgba(255, 255, 255, .05); }
+    .cpbox .srow { margin-bottom: 6px; }
+    .cphead { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; font-size: 11.5px; opacity: .95; }
+    .cphead .grow { flex: 1; }
+    .cpsw { width: 26px; height: 16px; border-radius: 5px; border: 1px solid rgba(255, 255, 255, .35); }
     .sbtn.primary { background: linear-gradient(135deg, var(--accentA, #7c5cff), var(--accentB, #22d3ee)); border-color: transparent; }
     .stylegrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 4px; }
     .stylegrid .sbtn { text-align: center; padding: 6px 4px; }

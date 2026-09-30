@@ -37,6 +37,7 @@
   let resizeHold = false; // 拖动滑杆期间先别重算窗口（每动一格 setSize 会让整个窗一格格地跳）
   let resizeHoldT = null;
   let panelMore = false;  // 面板里的「更多设置」是否展开
+  let openPicker = null;  // 面板里展开的取色器：null | 'active' | 'unsung'
 
   /**
    * 播放位置的本地插值。
@@ -676,11 +677,89 @@
     };
     return i;
   }
-  function colorInput(value, onInput) {
-    const i = document.createElement('input');
-    i.type = 'color'; i.value = value || '#ffffff';
-    i.oninput = () => onInput(i.value);
-    return i;
+  /** #rrggbb → { h: 0-360, s: 0-100, l: 0-100 } */
+  function hexToHsl(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+    const n = m ? parseInt(m[1], 16) : 0xffffff;
+    const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    const l = (mx + mn) / 2;
+    let h = 0, s = 0;
+    if (mx !== mn) {
+      const d = mx - mn;
+      s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+      if (mx === r) h = (g - b) / d + (g < b ? 6 : 0);
+      else if (mx === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+    }
+    return { h: Math.round(h), s: Math.round(s * 100), l: Math.round(l * 100) };
+  }
+
+  /** { h, s, l } → '#rrggbb' */
+  function hslToHex(h, s, l) {
+    const hh = ((Number(h) % 360) + 360) % 360;
+    const ss = Math.max(0, Math.min(100, Number(s))) / 100;
+    const ll = Math.max(0, Math.min(100, Number(l))) / 100;
+    const c = (1 - Math.abs(2 * ll - 1)) * ss;
+    const x = c * (1 - Math.abs(((hh / 60) % 2) - 1));
+    const m = ll - c / 2;
+    let r = 0, g = 0, b = 0;
+    if (hh < 60) { r = c; g = x; } else if (hh < 120) { r = x; g = c; }
+    else if (hh < 180) { g = c; b = x; } else if (hh < 240) { g = x; b = c; }
+    else if (hh < 300) { r = x; b = c; } else { r = c; b = x; }
+    const to = (v) => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+    return `#${to(r)}${to(g)}${to(b)}`;
+  }
+
+  /**
+   * 展开在面板里的取色器（色相 / 饱和度 / 明度三根滑杆）。
+   *
+   * 为什么不直接用 <input type="color">：它弹出来的是 Chromium 的**原生取色窗口**，
+   * 那是一个独立的系统窗口、不属于页面，而歌词浮层是 alwaysOnTop 的无边框透明窗口
+   * ——原生窗口压不过浮层，点开就被面板盖住了（用户看到的就是「调色盘图层优先级不高」）。
+   * 自己画在面板里就没有层级问题，顺便和面板配色统一。
+   */
+  function colorEditor(label, value, onChange) {
+    const box = document.createElement('div');
+    box.className = 'cpbox';
+    const hsl = hexToHsl(value);
+    const cur = () => hslToHex(hsl.h, hsl.s, hsl.l);
+
+    const head = document.createElement('div');
+    head.className = 'cphead';
+    const dot = document.createElement('span');
+    dot.className = 'cpsw';
+    dot.style.background = cur();
+    const name = document.createElement('span');
+    name.textContent = label;
+    const grow = document.createElement('span');
+    grow.className = 'grow';
+    const code = document.createElement('span');
+    code.className = 'val';
+    code.textContent = cur().toUpperCase();
+    head.appendChild(dot); head.appendChild(name); head.appendChild(grow); head.appendChild(code);
+    box.appendChild(head);
+
+    const apply = () => {
+      const hex = cur();
+      dot.style.background = hex;
+      code.textContent = hex.toUpperCase();
+      onChange(hex);
+    };
+    const add = (t, max, val, set) => {
+      const r = document.createElement('div');
+      r.className = 'srow';
+      const l = document.createElement('label');
+      l.textContent = t;
+      r.appendChild(l);
+      r.appendChild(range(0, max, 1, val, (v) => { set(v); apply(); }));
+      box.appendChild(r);
+    };
+    add('色相', 360, hsl.h, (v) => { hsl.h = v; });
+    add('饱和度', 100, hsl.s, (v) => { hsl.s = v; });
+    add('明度', 100, hsl.l, (v) => { hsl.l = v; });
+    return box;
   }
   function toggleBtn(on, text, onChange) {
     const b = document.createElement('button');
@@ -728,9 +807,20 @@
     const g2 = document.createElement('span');
     g2.className = 'grow';
     swRow.appendChild(g2);
-    swRow.appendChild(colorInput(L.activeColor, (v) => patchLyrics({ activeColor: v })));
-    swRow.appendChild(colorInput(L.unsungColor, (v) => patchLyrics({ unsungColor: v })));
+    // 两个色块按钮：点开就在下面展开自绘取色器（不用原生取色窗口，见 colorEditor）
+    const mkBtn = (key, label, color) => {
+      const b = document.createElement('button');
+      b.className = `cpbtn${openPicker === key ? ' on' : ''}`;
+      b.title = `${label}（点击展开取色器）`;
+      b.style.background = color || '#ffffff';
+      b.onclick = () => { openPicker = openPicker === key ? null : key; buildPanel(); scheduleResize(); };
+      return b;
+    };
+    swRow.appendChild(mkBtn('active', '已唱色', L.activeColor));
+    swRow.appendChild(mkBtn('unsung', '未唱色', L.unsungColor));
     box.appendChild(swRow);
+    if (openPicker === 'active') box.appendChild(colorEditor('已唱色（正在唱的部分）', L.activeColor, (v) => patchLyrics({ activeColor: v })));
+    if (openPicker === 'unsung') box.appendChild(colorEditor('未唱色（还没唱的部分）', L.unsungColor, (v) => patchLyrics({ unsungColor: v })));
 
     // 字号
     {
