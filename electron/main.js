@@ -219,7 +219,8 @@ async function handleAuroraRequest(req) {
     }
     // 在线音乐：音频流（支持 Range，可直接喂给 <audio>）
     //   ?v=<id>              哔哩哔哩（默认）
-    //   ?v=<id>&s=<provider>  聚合音源（kuwo / netease）
+    //   ?v=<id>&s=<provider>  聚合音源（qq / kuwo / netease）
+    //   &q=<base64url>        QQ音乐专用：歌名\u0001歌手\u0001时长，用来去别的音源找同曲
     if (kind === 'stream') {
       const v = params.get('v');
       const src = params.get('s') || 'bilibili';
@@ -232,7 +233,15 @@ async function handleAuroraRequest(req) {
         if (!aggregator.PROVIDER_NAMES[src] || !/^[A-Za-z0-9_-]{1,40}$/.test(v)) {
           return new Response('Bad source', { status: 400 });
         }
-        return await aggregator.streamResponse(src, v, req);
+        let hint = null;
+        const q = params.get('q');
+        if (q && /^[A-Za-z0-9_-]{0,600}$/.test(q)) {
+          try {
+            const raw = Buffer.from(q, 'base64url').toString('utf8').split('\u0001');
+            if (raw[0]) hint = { title: raw[0], artist: raw[1] || '', duration: Number(raw[2]) || 0 };
+          } catch { /* 参数坏了就走主进程缓存的那份 */ }
+        }
+        return await aggregator.streamResponse(src, v, req, hint);
       } catch (err) {
         const msg = err && err.message ? err.message : String(err);
         trace('proto stream FAIL ' + src + '/' + v + ' ' + msg);
@@ -242,6 +251,7 @@ async function handleAuroraRequest(req) {
     // 在线音乐：封面代理（避免放开 CSP 去直连外链图）
     //   ?u=<图片直链>                哔哩哔哩 / 酷我（地址可直接拼出来）
     //   ?s=netease&i=<pic_id>        网易云（真实地址要先解析一次）
+    //   ?s=qq&i=<albumMid>           QQ音乐（地址可直接拼）
     if (kind === 'thumb') {
       const u = params.get('u');
       const ts = params.get('s');

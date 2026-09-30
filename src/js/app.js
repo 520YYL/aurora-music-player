@@ -32,7 +32,7 @@
       coverStats: null,
       settings: null,
       // 在线音乐：两个分栏各自独立的状态，与本地曲库完全隔离，不污染 state.tracks
-      //   bili = 哔哩哔哩音源；all = 聚合音源（酷我 / 网易云）
+      //   bili = 哔哩哔哩音源；all = 聚合音源（QQ音乐 / 酷我 / 网易云）
       onlineTab: 'bili',
       online: { query: '', loading: false, error: '', tracks: [], providers: [] },
       onlineAll: { query: '', loading: false, error: '', tracks: [], providers: [] },
@@ -457,12 +457,12 @@
   /**
    * 在线音乐有两个分栏：
    *   bili —— 哔哩哔哩音源（electron/online.js）
-   *   all  —— 所有音乐（聚合音源：酷我 / 网易云，electron/aggregator.js）
+   *   all  —— 所有音乐（聚合音源：QQ音乐 / 酷我 / 网易云，electron/aggregator.js）
    * 各自维护搜索状态，切换分栏不会互相清空。
    */
   App.ONLINE_TABS = [
     { key: 'bili', label: '哔哩哔哩音源', icon: '📺', hint: '来自哔哩哔哩 · 无需 API Key · 播放时实时解析音频流' },
-    { key: 'all', label: '所有音乐', icon: '🌐', hint: '来自酷我音乐 / 网易云音乐 · 不含哔哩哔哩 · 无需 API Key' }
+    { key: 'all', label: '所有音乐', icon: '🌐', hint: '来自 QQ音乐 / 酷我音乐 / 网易云音乐 · 不含哔哩哔哩 · 无需 API Key' }
   ];
 
   /** 当前分栏对应的搜索状态 */
