@@ -80,9 +80,16 @@
       justify-content: center; gap: 4px; -webkit-app-region: no-drag;
     }
     .line { white-space: pre-wrap; word-break: break-word; transition: color .2s, opacity .2s; }
-    #cur { line-height: 1.26; }
-    #nxt { opacity: .48; }
-    #tr { opacity: .8; }
+    /* 三行的高度都必须固定：#lyr 是垂直居中的，只要「这一句折成一行还是两行」
+       「这一句有没有翻译 / 有没有下一句」改变了整块内容的高度，整块文字就会上下蹦
+       —— 这就是「歌词一跳一跳」的来源。所以：
+         · 当前句固定占两行（短句也占满，文字顶对齐）
+         · 翻译 / 下一句各固定占一行，没内容时用 .ghost 隐藏（保留高度），不要 display:none
+         · 频谱关掉时反而要 display:none（窗口那边也不再给它留位置） */
+    #cur { line-height: 1.26; min-height: 2.52em; }
+    #nxt { opacity: .48; min-height: 1.26em; }
+    #tr { opacity: .8; min-height: calc(1.26em + 3px); }
+    .ghost { visibility: hidden !important; }
     /* 翻译行与正文字号一致（字号由 JS 统一设定，这里只负责排版），
        主次靠透明度区分——以前这里按 .64em 缩过，同一屏两行一大一小。 */
     .tr-text { display: block; font-size: 1em; margin-top: 3px; opacity: .85; }
@@ -127,6 +134,7 @@
       background: rgba(255, 255, 255, .08); color: #fff; cursor: pointer; font-size: 11.5px;
     }
     .sbtn:hover { background: rgba(255, 255, 255, .18); }
+    .sbtn.wide { flex: 1; text-align: center; }
     .sbtn.primary { background: linear-gradient(135deg, var(--accentA, #7c5cff), var(--accentB, #22d3ee)); border-color: transparent; }
     .stylegrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 4px; }
     .stylegrid .sbtn { text-align: center; padding: 6px 4px; }

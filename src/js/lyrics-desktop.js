@@ -34,6 +34,9 @@
   let curLineRange = null;   // [startSec, endSec]，用于算逐字进度
   let lastCoverId = null;
   let lastProgress = 0;   // 最近一次的逐字进度，改外观设置时用它补刷染色
+  let resizeHold = false; // 拖动滑杆期间先别重算窗口（每动一格 setSize 会让整个窗一格格地跳）
+  let resizeHoldT = null;
+  let panelMore = false;  // 面板里的「更多设置」是否展开
 
   /**
    * 播放位置的本地插值。
@@ -173,7 +176,9 @@
     // 结果就是光带一直不出现（只在切句的瞬间闪一下）。
     paintKaraoke(lastProgress);
 
-    scheduleResize();
+    // 拖字号 / 行距滑杆时先不重算窗口尺寸：否则每动一格就 setSize 一次，
+    // 从封面到文字整块都在跟着抖。松手（change）时再统一算一次。
+    if (!resizeHold) scheduleResize();
   }
 
   /* ================================================================== */
@@ -260,13 +265,30 @@
     el.cur.style.backgroundClip = 'text';
   }
 
+  /**
+   * 一行的三种状态：
+   *   'show'  —— 正常显示
+   *   'ghost' —— 不显示内容，但**保留高度**（.ghost 只是 visibility:hidden）
+   *   'none'  —— 完全隐藏，不占高度（功能被关掉、整首没有歌词时才用）
+   *
+   * 为什么要有 'ghost'：#lyr 是垂直居中的，歌词块的高度只要一变，整块文字就会
+   * 上下蹦一下。而「这一句有没有翻译」「有没有下一句」「当前句折成一行还是两行」
+   * 本来都是逐句变化的 —— 所以没内容时也要留着那一行的位置。
+   */
+  function setRow(node, mode) {
+    node.classList.toggle('ghost', mode === 'ghost');
+    node.classList.toggle('hidden', mode === 'none');
+  }
+
   function renderLine(force) {
     const i = payload ? payload.lyricIndex : -1;
     const active = lines[i];
+    const trOn = L.showTranslation !== false;
+    const nxOn = L.showNextLine !== false;
 
     if (!active) {
       if (!lines.length) {
-        el.cur.classList.add('hidden'); el.tr.classList.add('hidden'); el.nxt.classList.add('hidden');
+        setRow(el.cur, 'none'); setRow(el.tr, 'none'); setRow(el.nxt, 'none');
         curLineRange = null;
         if (!gotPayload) { el.empty.classList.add('hidden'); return; }
         el.empty.classList.remove('hidden');
@@ -275,7 +297,10 @@
       }
       // 前奏：把第一句当成「即将开始」显示，别整块留白
       el.empty.classList.add('hidden');
-      el.cur.classList.add('hidden'); el.tr.classList.add('hidden');
+      // 当前句 / 翻译行留空位（ghost），只把第一句放进「下一句」那一行 ——
+      // 这样歌曲真正开始时，只是文字换行、整块布局不动
+      setRow(el.cur, 'ghost');
+      setRow(el.tr, trOn ? 'ghost' : 'none');
       curLineRange = null;
       const wanted = lines[0] ? lines[0].text : '';
       if (wanted) {
@@ -284,13 +309,13 @@
           el.nxt.textContent = wanted;
           el.nxt.style.fontFamily = fontFor(lines[0].lang || lines[0].isCJK);
         }
-        el.nxt.classList.remove('hidden');
-      } else el.nxt.classList.add('hidden');
+        setRow(el.nxt, 'show');
+      } else setRow(el.nxt, nxOn ? 'ghost' : 'none');
       return;
     }
 
     el.empty.classList.add('hidden');
-    el.cur.classList.remove('hidden');
+    setRow(el.cur, 'show');
     el.cur.style.opacity = String(L.opacity === undefined ? 0.96 : L.opacity);
 
     if (curIdx !== i || force) {
@@ -299,21 +324,21 @@
       window.__perf.rendered++;
       paintLine(active.text, active.lang || active.isCJK);
 
-      if (active.tr && L.showTranslation !== false) {
+      if (active.tr && trOn) {
         el.tr.textContent = '';
         const t = document.createElement('span');
         t.className = 'tr-text';
         t.textContent = active.tr;
         el.tr.appendChild(t);
-        el.tr.classList.remove('hidden');
-      } else el.tr.classList.add('hidden');
+        setRow(el.tr, 'show');
+      } else setRow(el.tr, trOn ? 'ghost' : 'none');
 
       const nx = lines[i + 1];
-      if (nx && L.showNextLine !== false) {
+      if (nx && nxOn) {
         el.nxt.textContent = nx.text;
-        el.nxt.classList.remove('hidden');
         el.nxt.style.fontFamily = fontFor(nx.lang || nx.isCJK);
-      } else el.nxt.classList.add('hidden');
+        setRow(el.nxt, 'show');
+      } else setRow(el.nxt, nxOn ? 'ghost' : 'none');
     }
 
     paintProgress();
@@ -427,7 +452,8 @@
     let rows = CUR_LINES * lineH;
     if (L.showTranslation !== false) rows += lg + lineH + 3;   // +3 是 .tr-text 的 margin-top
     if (L.showNextLine !== false) rows += lg + lineH;
-    if (specActive()) rows += lg + (Number(el.spec.offsetHeight) || Math.round(size * 0.7));
+    // 频谱：+8 是 #spec 自己的 margin-top（flex 的 gap 之外还有这一段）
+    if (specActive()) rows += lg + 8 + (Number(el.spec.offsetHeight) || Math.round(size * 0.7));
 
     let contentH = padY + 4;
     if (coverW) contentH = Math.max(contentH, coverW + padY + 4);
@@ -545,10 +571,21 @@
 
     // 横向频谱（不需要封面也能显示）
     if (!specActive()) {
-      if (specShown !== false) { el.spec.classList.remove('on'); specShown = false; }
+      // 关掉频谱时要 display:none，不能只去掉 .on（那只是 opacity:0）：
+      // 它仍占着 margin-top 8 + --specH 的高度，跟 applyWindowSize 里
+      // 「不显示频谱就不预留这一行」对不上，整块文字会被顶偏。
+      if (specShown !== false) {
+        el.spec.classList.remove('on');
+        el.spec.classList.add('hidden');
+        specShown = false;
+      }
       return;
     }
-    if (specShown !== true) { el.spec.classList.add('on'); specShown = true; }
+    if (specShown !== true) {
+      el.spec.classList.add('on');
+      el.spec.classList.remove('hidden');
+      specShown = true;
+    }
     const data = liveSpec;
     const n = specBars.length;
     const maxH = Number(el.spec.clientHeight) || 26;
@@ -624,7 +661,19 @@
   function range(min, max, step, value, onInput) {
     const i = document.createElement('input');
     i.type = 'range'; i.min = min; i.max = max; i.step = step; i.value = value;
-    i.oninput = () => onInput(Number(i.value));
+    // 拖动期间挂起窗口重算（resizeHold），松手或停手 0.5 秒后再算一次。
+    // 不这么做的话，滑杆每动一格都会 setSize，窗口一格格跳。
+    i.oninput = () => {
+      resizeHold = true;
+      clearTimeout(resizeHoldT);
+      resizeHoldT = setTimeout(() => { resizeHold = false; scheduleResize(); }, 500);
+      onInput(Number(i.value));
+    };
+    i.onchange = () => {
+      clearTimeout(resizeHoldT);
+      resizeHold = false;
+      scheduleResize();
+    };
     return i;
   }
   function colorInput(value, onInput) {
@@ -649,7 +698,7 @@
     const head = document.createElement('div');
     head.className = 'shead';
     const t1 = document.createElement('span');
-    t1.textContent = '🎨 外观';
+    t1.textContent = '🎨 桌面歌词';
     const g = document.createElement('span');
     g.className = 'grow';
     const closeBtn = document.createElement('button');
@@ -696,6 +745,19 @@
       box.appendChild(r);
     }
     box.appendChild(srow('行间距', range(0, 60, 1, L.lineGap || 12, (v) => patchLyrics({ lineGap: v })), `${L.lineGap || 12}px`));
+
+    // 常用的就「配色 / 字号 / 行间距」这三项，其余全部收进「更多设置」：
+    // 一打开面板就是十几个开关，连歌词都被挡住了。
+    const moreRow = document.createElement('div');
+    moreRow.className = 'srow';
+    const moreBtn = document.createElement('button');
+    moreBtn.className = 'sbtn wide';
+    moreBtn.textContent = panelMore ? '更多设置 ▴' : '更多设置 ▾';
+    moreBtn.onclick = () => { panelMore = !panelMore; buildPanel(); scheduleResize(); };
+    moreRow.appendChild(moreBtn);
+    box.appendChild(moreRow);
+
+    if (panelMore) {
     box.appendChild(srow('不透明度', range(0.15, 1, 0.01, L.opacity === undefined ? 0.96 : L.opacity, (v) => patchLyrics({ opacity: v })), `${Math.round((L.opacity === undefined ? 0.96 : L.opacity) * 100)}%`));
 
     // 风格：三选一
@@ -753,6 +815,7 @@
     box.appendChild(srow('下一句', toggleBtn(L.showNextLine !== false, L.showNextLine !== false ? '开' : '关', (v) => patchLyrics({ showNextLine: v })), ''));
     box.appendChild(srow('底板', toggleBtn(L.bg && L.bg.enabled, L.bg && L.bg.enabled ? '开' : '关', (v) => patchLyrics({ bg: { ...(L.bg || {}), enabled: v } }).then(buildPanel)), ''));
     box.appendChild(srow('底板透明', range(0, 1, 0.02, (L.bg && L.bg.opacity) === undefined ? 0.55 : L.bg.opacity, (v) => patchLyrics({ bg: { ...(L.bg || {}), opacity: v } }))));
+    } /* end if (panelMore) */
 
     const btns = document.createElement('div');
     btns.className = 'srow';
