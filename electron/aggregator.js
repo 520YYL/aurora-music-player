@@ -45,6 +45,11 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const SEARCH_TIMEOUT_MS = 12000;
 const STREAM_TIMEOUT_MS = 20000;
 const GD_TIMEOUT_MS = 8000;
+/**
+ * 跨平台兜底时，网易云最多等这么久。聚合接口 503 时会退避重试，
+ * 兜底场景下没必要为它多等，超时就交给哔哩哔哩（B 站本来就已经在并发了）。
+ */
+const NE_FALLBACK_WAIT_MS = 900;
 
 const STREAM_TTL_MS = 15 * 60 * 1000;
 const STREAM_CACHE_MAX = 48;
@@ -133,8 +138,8 @@ async function gdFetch(qs, tries = 3) {
   throw last || new Error('聚合接口请求失败');
 }
 
-async function neteaseSearch(query, want) {
-  const r = await gdFetch(`?types=search&source=netease&name=${encodeURIComponent(query)}&count=${Math.min(60, want)}&pages=1`);
+async function neteaseSearch(query, want, tries = 3) {
+  const r = await gdFetch(`?types=search&source=netease&name=${encodeURIComponent(query)}&count=${Math.min(60, want)}&pages=1`, tries);
   const arr = await r.json();
   if (!Array.isArray(arr)) throw new Error('聚合接口返回格式异常');
   return arr.map((it) => {
@@ -548,8 +553,13 @@ async function resolveNeteaseUrl(id) {
 }
 
 /**
- * 版权/会员受限、或平台本身不放流时，拿「歌名 + 歌手 + 时长」去另一个平台找同一首歌出流。
- * @returns {Promise<{url:string, via:string}|null>}
+ * 版权/会员受限、或平台本身不放流时，拿「歌名 + 歌手 + 时长」去别的平台找同一首歌出流。
+ *
+ * 三个平台**同时并发搜**，再按「酷狗 → 网易云 → 哔哩哔哩」的优先级依次取结果。
+ * 串行等的话点一次歌要付 3 个网络往返，用户能明显感到卡顿；并发之后最坏情况
+ * 只等于最慢的那一个，命中高优先级时更是直接返回、不必等后面两个。
+ *
+ * @returns {Promise<{url?:string, bvid?:string, via:string}|null>}
  */
 async function crossResolve(meta, except) {
   if (!meta || !meta.title) return null;
@@ -558,24 +568,41 @@ async function crossResolve(meta, except) {
   // 「晴天 (2017周杰伦地表最强演唱会台北站)」这种长标题，整串丢给搜索接口会一条都搜不到
   const shortTitle = String(meta.title || '').replace(/[（(\[【][^)）\]】]*[)）\]】]/g, '').trim() || String(meta.title || '');
   const query = `${shortTitle} ${firstArtist}`.trim();
-  for (const src of ['kugou', 'netease']) {
-    if (src === except) continue;
-    try {
-      const list = src === 'kugou' ? await kugouSearch(query, 15) : await neteaseSearch(query, 15);
-      // 优先挑「能直接放」的那条：酷狗付费曲目拿不到地址，别浪费一次请求
-      const hit = pickBestMatch(list.filter((x) => !x.vip), meta) || pickBestMatch(list, meta);
-      if (!hit) continue;
-      const url = src === 'kugou' ? await resolveKugouUrl(hit.videoId) : await resolveNeteaseUrl(hit.videoId);
-      return { url, via: src };
-    } catch { /* 这个平台也不行，换下一个 */ }
+
+  // 先把三个请求都发出去（失败各自吞掉，变成空数组）
+  const kgP = except === 'kugou'
+    ? null
+    : kugouSearch(query, 15).catch(() => []);
+  const neP = except === 'netease'
+    ? null
+    : neteaseSearch(query, 15, 2).catch(() => []);   // 兜底用，只重试 2 次，别让 503 拖住播放
+  const biliP = online.search(query, 20).then((r) => r.items || []).catch(() => []);
+
+  // 酷狗优先
+  if (kgP) {
+    const list = await kgP;
+    const hit = pickBestMatch(list.filter((x) => !x.vip), meta) || pickBestMatch(list, meta);
+    if (hit) {
+      const url = await resolveKugouUrl(hit.videoId).catch(() => null);
+      if (url) return { url, via: 'kugou' };
+    }
+  }
+
+  // 网易云（请求早就发出去了，这里通常不用再等；超时就放弃它，别拖住 B 站）
+  if (neP) {
+    const list = await Promise.race([neP, sleep(NE_FALLBACK_WAIT_MS).then(() => null)]);
+    if (list) {
+      const hit = pickBestMatch(list, meta);
+      if (hit) {
+        const url = await resolveNeteaseUrl(hit.videoId).catch(() => null);
+        if (url) return { url, via: 'netease' };
+      }
+    }
   }
 
   // 最后一站：哔哩哔哩。正版平台都不给放时，B 站上的「完整版 / 无损」投稿往往还能放。
-  try {
-    const r = await online.search(query, 20);
-    const hit = biliPick(r.items || [], meta);
-    if (hit) return { bvid: hit.videoId, via: 'bilibili' };
-  } catch { /* B 站也不行就算了 */ }
+  const hit = biliPick(await biliP, meta);
+  if (hit) return { bvid: hit.videoId, via: 'bilibili' };
 
   return null;
 }
