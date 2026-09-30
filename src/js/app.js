@@ -32,7 +32,9 @@
       coverStats: null,
       settings: null,
       // 在线音乐（哔哩哔哩）搜索状态 —— 与本地曲库完全隔离，不污染 state.tracks
-      online: { query: '', loading: false, error: '', tracks: [] }
+      online: { query: '', loading: false, error: '', tracks: [] },
+      // 在线收藏：同样是独立列表，磁盘上存 userData/online-favorites.json
+      onlineFavs: []
     }
   };
   window.App = App;
@@ -46,6 +48,11 @@
     const lib = await api.library.get();
     App.state.tracks = lib.tracks || [];
     App.state.playlists = await api.playlists.get();
+    // 在线收藏：读失败不影响启动
+    try {
+      const favs = await api.online.favorites();
+      App.state.onlineFavs = Array.isArray(favs) ? favs.filter((t) => t && t.videoId) : [];
+    } catch { App.state.onlineFavs = []; }
     App.settings.__dataDir = App.state.appInfo.dataDir;
 
     // 从设置恢复 UI 状态
@@ -388,7 +395,8 @@
   function updateCounts() {
     const all = App.state.tracks;
     $('#cntAll').textContent = String(all.length);
-    $('#cntFav').textContent = String(all.filter((t) => t.favorite).length);
+    // 收藏数 = 本地收藏 + 在线收藏
+    $('#cntFav').textContent = String(all.filter((t) => t.favorite).length + App.state.onlineFavs.length);
     $('#cntPl').textContent = String(App.state.playlists.length);
 
     // 侧栏根目录
@@ -444,8 +452,9 @@
    * aurora://local/stream，其余（播放/暂停/上下首/音量/进度）全部复用现有逻辑。
    */
   function onlineTrackFrom(item) {
+    const id = 'yt_' + item.videoId;
     return {
-      id: 'yt_' + item.videoId,
+      id,
       online: true,
       videoId: item.videoId,
       title: item.title,
@@ -455,16 +464,17 @@
       format: '在线',
       path: null,
       hasCover: false,
+      favorite: App.isOnlineFav(id),
       coverUrl: api.online.thumbUrl(item.thumbnail)
     };
   }
 
-  /** 播放第 i 首在线结果（整份搜索结果作为播放队列，可自动上下首） */
-  App.playOnlineAt = function (i) {
-    const list = App.state.online.tracks;
-    if (!list.length) return;
-    const idx = Math.max(0, Math.min(list.length - 1, Number(i) || 0));
-    App.player.setQueue(list, idx);
+  /** 播放第 i 首在线歌曲；list 省略时用当前搜索结果当队列 */
+  App.playOnlineAt = function (i, list) {
+    const queue = Array.isArray(list) && list.length ? list : App.state.online.tracks;
+    if (!queue.length) return;
+    const idx = Math.max(0, Math.min(queue.length - 1, Number(i) || 0));
+    App.player.setQueue(queue, idx);
   };
 
   /** 搜索在线音乐（结果只放在 state.online，不写进 state.tracks，避免污染本地曲库） */
@@ -498,7 +508,69 @@
     if (App.state.view === 'online') App.render();
   };
 
+  /* ---------------------------- 在线收藏 ---------------------------- */
+  /** 这首歌是否已在「在线收藏」里 */
+  App.isOnlineFav = function (id) {
+    return App.state.onlineFavs.some((t) => t.id === id);
+  };
+
+  /** 只保留渲染与播放需要的字段，避免把整个搜索结果塞进磁盘 */
+  function slimOnlineTrack(t) {
+    return {
+      id: t.id,
+      online: true,
+      videoId: t.videoId,
+      title: t.title,
+      artist: t.artist,
+      album: t.album,
+      duration: t.duration,
+      format: t.format || '在线',
+      path: null,
+      hasCover: false,
+      favorite: true,
+      coverUrl: t.coverUrl || (t.thumbnail ? api.online.thumbUrl(t.thumbnail) : '')
+    };
+  }
+
+  /**
+   * 收藏 / 取消收藏一首在线歌曲。
+   * 收藏后它会出现在「我的收藏」里（单独一段「在线收藏」），
+   * 但不会混进「全部音乐」——本地曲库依然干净。
+   */
+  App.toggleOnlineFavorite = async function (track) {
+    if (!track || !track.videoId) return;
+    const id = track.id || ('yt_' + track.videoId);
+    const idx = App.state.onlineFavs.findIndex((x) => x.id === id);
+    const add = idx < 0;
+    if (add) App.state.onlineFavs.unshift(slimOnlineTrack(Object.assign({}, track, { id })));
+    else App.state.onlineFavs.splice(idx, 1);
+    track.favorite = add;
+
+    // 同一首歌可能同时出现在搜索结果和收藏列表里，一起同步
+    for (const x of App.state.online.tracks) if (x.id === id) x.favorite = add;
+    if (App.player.current && App.player.current.id === id) {
+      App.player.current.favorite = add;
+      updateFavButton();
+    }
+
+    try { await api.online.saveFavorites(App.state.onlineFavs); } catch { /* 存盘失败不阻塞界面 */ }
+
+    if (App.state.view === 'favorites') {
+      App.render();                       // 收藏页要让这一行出现 / 消失
+    } else {
+      const row = document.querySelector(`.track-row[data-id="${id}"]`);
+      const fav = row && row.querySelector('.t-actions .btn-fav');
+      if (fav) { fav.textContent = add ? '♥' : '♡'; fav.classList.toggle('fav-on', add); }
+      updateCounts();
+    }
+    U.toast(add ? '已加入收藏 ♥' : '已取消收藏', 'ok', 1400);
+  };
+
   App.toggleFavorite = async function (id) {
+    // 在线歌曲走单独的收藏列表，不写进本地曲库
+    if (App.player.current && App.player.current.online && App.player.current.id === id) {
+      return App.toggleOnlineFavorite(App.player.current);
+    }
     const t = App.state.tracks.find((x) => x.id === id);
     if (!t) return;
     t.favorite = !t.favorite;

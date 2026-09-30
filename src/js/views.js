@@ -31,9 +31,11 @@
     const wrap = ce('div', { class: 'col', style: { height: '100%' } });
     const s = app.settings;
     const list = app.visibleTracks();
+    // 只有「我的收藏」页才额外列出在线收藏
+    const onlineFavs = app.state.view === 'favorites' ? (app.state.onlineFavs || []) : [];
     const titleMap = {
       library: ['全部音乐', `${list.length} 首 · 来自 ${(app.state.settings.library.roots || []).length} 个文件夹`],
-      favorites: ['我的收藏', `${list.length} 首`],
+      favorites: ['我的收藏', onlineFavs.length ? `${list.length} 首本地 · ${onlineFavs.length} 首在线` : `${list.length} 首`],
       recent: ['最近播放', `${list.length} 首`],
       playlist: [app.currentPlaylistName(), `${list.length} 首`]
     };
@@ -82,7 +84,31 @@
     const body = ce('div', { class: 'view-body' });
     wrap.appendChild(body);
 
-    if (!list.length) {
+    const cols = '34px 34px minmax(160px, 2.6fr) minmax(110px, 1.5fr) 62px 60px 108px 84px 78px';
+
+    /** 「我的收藏」页：本地收藏列表下面再接一段「在线收藏」（哔哩哔哩） */
+    function appendOnlineFavs() {
+      if (!onlineFavs.length) return;
+      body.appendChild(ce('div', {
+        style: {
+          marginTop: '18px', padding: '10px 4px 8px', fontSize: '12px',
+          fontWeight: '600', opacity: '.72', borderTop: '1px solid rgba(255,255,255,.08)'
+        },
+        text: `在线收藏 · ${onlineFavs.length} 首（来自哔哩哔哩）`
+      }));
+      const fh = ce('div', { class: 'track-head', style: { '--cols': cols } });
+      for (const label of ['#', '', '标题', 'UP主', '格式', '时长', '来源', '', '操作']) {
+        fh.appendChild(ce('div', { text: label }));
+      }
+      body.appendChild(fh);
+      const box = ce('div', { class: 'track-list' });
+      const frag2 = document.createDocumentFragment();
+      onlineFavs.forEach((t2, i) => frag2.appendChild(onlineRow(app, t2, i, cols, onlineFavs)));
+      box.appendChild(frag2);
+      body.appendChild(box);
+    }
+
+    if (!list.length && !onlineFavs.length) {
       body.appendChild(ce('div', { class: 'empty' }, [
         ce('div', { class: 'big', text: '🎧' }),
         ce('h3', { text: app.state.search ? '没有找到匹配的歌曲' : '曲库还是空的' }),
@@ -104,11 +130,11 @@
         grid.appendChild(card);
       }
       body.appendChild(grid);
+      appendOnlineFavs();
       return wrap;
     }
 
     // 列表
-    const cols = '34px 34px minmax(160px, 2.6fr) minmax(110px, 1.5fr) 62px 60px 108px 84px 78px';
     const head2 = ce('div', { class: 'track-head', style: { '--cols': cols } });
     const colDefs = [
       ['#', null], ['', null], ['标题', 'title'], ['专辑', 'album'], ['格式', 'format'],
@@ -139,6 +165,8 @@
       scrollParent: body,
       onReorder: (ids) => app.applyManualOrder(ids)
     });
+
+    appendOnlineFavs();
 
     return wrap;
   }
@@ -233,6 +261,12 @@
       // 在线曲目没有本地文件，只保留云端相关的操作
       const opsList = t.online ? [
         ce('button', {
+          class: `btn sm${t.favorite ? ' fav-on' : ''}`,
+          text: t.favorite ? '♥ 已收藏' : '♡ 收藏',
+          title: '收藏到「我的收藏」 (Ctrl+D)',
+          onclick: () => app.toggleOnlineFavorite(t)
+        }),
+        ce('button', {
           class: 'btn sm', text: '🌐 在 B 站中打开',
           onclick: () => window.aurora.app.openExternal('https://www.bilibili.com/video/' + encodeURIComponent(t.videoId))
         }),
@@ -263,7 +297,7 @@
   /* ================================================================== */
   /* 在线音乐视图（哔哩哔哩公开接口）                                      */
   /* ================================================================== */
-  function onlineRow(app, t, i, cols) {
+  function onlineRow(app, t, i, cols, list) {
     const playing = app.player.current && app.player.current.id === t.id;
     const el = ce('div', {
       class: `track-row${playing ? ' playing' : ''}`,
@@ -272,7 +306,7 @@
     });
     el.appendChild(ce('div', { class: 't-idx' }, [
       ce('span', { class: 'num', text: playing ? '♪' : String(i + 1) }),
-      ce('span', { class: 'play-mini', text: '▶', onclick: (e) => { e.stopPropagation(); app.playOnlineAt(i); } })
+      ce('span', { class: 'play-mini', text: '▶', onclick: (e) => { e.stopPropagation(); app.playOnlineAt(i, list); } })
     ]));
     el.appendChild(ce('div', { class: 't-drag' }));
     el.appendChild(ce('div', { class: 't-main' }, [
@@ -291,11 +325,16 @@
     el.appendChild(ce('div', { class: 't-cell' }));
     el.appendChild(ce('div', { class: 't-actions' }, [
       ce('button', {
+        class: `btn icon ghost btn-fav${t.favorite ? ' fav-on' : ''}`,
+        text: t.favorite ? '♥' : '♡', title: '收藏 (Ctrl+D)',
+        onclick: (e) => { e.stopPropagation(); app.toggleOnlineFavorite(t); }
+      }),
+      ce('button', {
         class: 'btn icon ghost', text: '▶', title: '播放',
-        onclick: (e) => { e.stopPropagation(); app.playOnlineAt(i); }
+        onclick: (e) => { e.stopPropagation(); app.playOnlineAt(i, list); }
       })
     ]));
-    el.addEventListener('click', () => app.playOnlineAt(i));
+    el.addEventListener('click', () => app.playOnlineAt(i, list));
     return el;
   }
 
@@ -317,7 +356,7 @@
       onclick: () => { const s = document.querySelector('#search'); if (s) { s.focus(); s.select(); } }
     }));
     if (st.tracks.length) {
-      tb.appendChild(ce('button', { class: 'btn sm', html: '▶ 播放全部结果', onclick: () => app.playOnlineAt(0) }));
+      tb.appendChild(ce('button', { class: 'btn sm', html: '▶ 播放全部结果', onclick: () => app.playOnlineAt(0, st.tracks) }));
     }
     tb.appendChild(ce('div', { class: 'sep' }));
     tb.appendChild(ce('span', { class: 'muted', style: { fontSize: '12px' }, text: '来自哔哩哔哩 · 无需 API Key · 播放时实时解析音频流' }));
@@ -361,7 +400,7 @@
 
     const listEl = ce('div', { class: 'track-list' });
     const frag = document.createDocumentFragment();
-    st.tracks.forEach((t, i) => frag.appendChild(onlineRow(app, t, i, cols)));
+    st.tracks.forEach((t, i) => frag.appendChild(onlineRow(app, t, i, cols, st.tracks)));
     listEl.appendChild(frag);
     body.appendChild(listEl);
     return wrap;

@@ -101,7 +101,9 @@
 - 结果展示 **歌名 / 歌手 / UP主 / 封面 / 时长**，点任意一首直接播放。
 - **不需要 API Key、不需要任何代理、不需要自建服务器**，国内网络直连；全部逻辑跑在 Electron 主进程内，播放时按需实时解析音频直链，不落地缓存音频文件。
 - 加载 / 播放 / 暂停 / 继续 / 上一首 / 下一首 / 音量 / 拖进度条 / 变速变调 / 切歌过渡全部复用现有的本地播放引擎；迷你窗、桌面歌词浮层与系统媒体控制（SMTC）同样会显示在线封面。
-- 在线曲目与本地曲库**完全隔离**：不会混进「全部音乐」「收藏」「最近播放」，也不写入本地曲库缓存。
+- 在线曲目与本地曲库**完全隔离**：不会混进「全部音乐」「最近播放」，也不写进本地曲库 `library.json`。
+- 搜索结果、「正在播放」页和底部播放栏都有 **♡ 收藏** 按钮（快捷键 `Ctrl+D`）。收藏的在线歌曲会出现在侧栏「**❤️ 我的收藏**」里，单独排在本机收藏的下方一段「在线收藏」，可照常点播、上下首；侧栏收藏计数 = 本机收藏 + 在线收藏。
+- 在线收藏存放在 `userData/online-favorites.json`，与本地曲库 `library.json` 分开，删掉它只会清空在线收藏。
 - 音频流通过 `aurora://local/stream?v=<bvid>` 由主进程代理并按 HTTP Range 透传（音频是标准 MP4/AAC，Chromium 原生支持），封面通过 `aurora://local/thumb?u=<url>` 代理，因此不放开 CSP、也不引入跨域问题。
 - 音频直链带时效（通常几小时），过期或被下线时**自动重新解析一次**；再失败就停止并把错误显示在页面上，不做无限重试。
 - ⚠️ 早先的 YouTube Music 方案（youtubei.js）需要能访问 `music.youtube.com`，在无法直连的网络下会报「在线音乐初始化失败：fetch failed」，现已改为哔哩哔哩音源。
@@ -197,6 +199,7 @@ AuroraPlayer.exe --verbose               # 输出渲染进程控制台日志
 | 曲库（含每首累计时长、播放次数） | `%APPDATA%\AuroraPlayer\library.json` |
 | 听歌统计（每日时长 + 每首累计） | `%APPDATA%\AuroraPlayer\stats.json` |
 | 播放列表 | `%APPDATA%\AuroraPlayer\playlists.json` |
+| 在线音乐收藏 | `%APPDATA%\AuroraPlayer\online-favorites.json` |
 | 封面缓存 | `%APPDATA%\AuroraPlayer\covers\` |
 | 导入的歌词 | `%APPDATA%\AuroraPlayer\lyrics\` |
 | 元数据缓存 | `%APPDATA%\AuroraPlayer\meta-cache.json` |

@@ -61,7 +61,7 @@ trace('module-loaded argv=' + process.argv.slice(1).join(' '));
 let lyricsSized = false;
 /** @type {Tray|null} */ let tray = null;
 
-let settingsStore, libraryStore, statsStore, playlistsStore;
+let settingsStore, libraryStore, statsStore, playlistsStore, onlineFavStore;
 let metaCache = {};
 let NEEDS_LIBRARY_REBUILD = false;
 let DATA_DIR = '';
@@ -257,6 +257,8 @@ function initStores() {
   libraryStore = new JsonStore(path.join(DATA_DIR, 'library.json'), { tracks: [], roots: [], updatedAt: 0 });
   statsStore = new JsonStore(path.join(DATA_DIR, 'stats.json'), { version: 1, days: {}, tracks: {}, totals: { ms: 0 }, createdAt: Date.now() });
   playlistsStore = new JsonStore(path.join(DATA_DIR, 'playlists.json'), { playlists: [] });
+  // 在线收藏（哔哩哔哩曲目）单独存一个文件，不混进本地曲库 library.json
+  onlineFavStore = new JsonStore(path.join(DATA_DIR, 'online-favorites.json'), { items: [] });
 
   try { metaCache = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'meta-cache.json'), 'utf8')); } catch { metaCache = {}; }
 
@@ -925,6 +927,12 @@ function setupIpc() {
 
   // 在线音乐（哔哩哔哩公开接口）：只暴露搜索，音频/封面走 aurora:// 协议
   handle('online:search', (evt, query, limit) => online.search(query, limit));
+  handle('online:favorites', () => onlineFavStore.get('items', []));
+  handle('online:setFavorites', (evt, list) => {
+    onlineFavStore.set('items', Array.isArray(list) ? list : []);
+    onlineFavStore.save();
+    return { ok: true, count: onlineFavStore.get('items', []).length };
+  });
 
   handle('app:info', () => ({
     version: app.getVersion(),
@@ -2176,7 +2184,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   quitting = true;
-  try { settingsStore?.save(); libraryStore?.save(); statsStore?.save(); playlistsStore?.save(); } catch { /* ignore */ }
+  try { settingsStore?.save(); libraryStore?.save(); statsStore?.save(); playlistsStore?.save(); onlineFavStore?.save(); } catch { /* ignore */ }
   try { globalShortcut.unregisterAll(); } catch { /* ignore */ }
 });
 

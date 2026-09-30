@@ -96,7 +96,10 @@ contextBridge.exposeInMainWorld('aurora', {
   online: {
     search: (query, limit) => invoke('online:search', query, limit),
     streamUrl: (videoId) => `aurora://local/stream?v=${encodeURIComponent(videoId)}`,
-    thumbUrl: (u) => (u ? `aurora://local/thumb?u=${encodeURIComponent(u)}` : '')
+    thumbUrl: (u) => (u ? `aurora://local/thumb?u=${encodeURIComponent(u)}` : ''),
+    // 在线收藏（存在 userData/online-favorites.json）
+    favorites: () => invoke('online:favorites'),
+    saveFavorites: (list) => invoke('online:setFavorites', list)
   },
   debug: {
     windows: () => invoke('debug:windows')
