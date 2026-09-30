@@ -585,6 +585,9 @@
   /* ================================================================== */
   /* 右键菜单（工具条已移除，设置与关闭都从这里进）                        */
   /* ================================================================== */
+  // 注意：只有 no-drag 的区域才能收到 contextmenu（见 lyrics.html 里 #lyr 的
+  // 说明）——drag 区域在 Windows 上等同于标题栏，右键会弹系统菜单。
+  // 所以歌词区被显式设成 no-drag，右键才不会看到「还原 / 移动 / 大小 / 关闭」。
 
   function togglePanel(force) {
     const open = typeof force === 'boolean' ? force : !el.panel.classList.contains('open');
@@ -766,7 +769,12 @@
     box.appendChild(btns);
   }
 
-  document.addEventListener('contextmenu', (e) => { e.preventDefault(); togglePanel(); });
+  document.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    // 面板内部（滑杆 / 取色器 / 按钮）右键不要当成开关，否则调一半就关了
+    if (el.panel.classList.contains('open') && el.panel.contains(e.target)) return;
+    togglePanel();
+  });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') togglePanel(false); });
 
   /* ================================================================== */

@@ -12,7 +12,8 @@
       user-select: none; -webkit-font-smoothing: antialiased;
     }
 
-    /* 整块可以拖动；锁定后改成 no-drag（配合鼠标穿透） */
+    /* 可拖动的窗口区域（左侧封面 + 四周留白）；
+       歌词区见下面 #lyr 的 no-drag 说明。锁定后整块 no-drag（配合鼠标穿透） */
     #root {
       position: absolute; inset: 0; display: flex; align-items: center;
       gap: 18px; padding: 14px 20px;
@@ -25,7 +26,8 @@
     #bg.on { opacity: 1; }
 
     /* ---------------- 左侧圆形封面 ----------------
-       不加 -webkit-app-region: no-drag，这样按住封面也能拖动整个窗口 */
+       故意不加 no-drag：歌词区为了右键设置改成了 no-drag，
+       封面（和四周留白）就成了拖动窗口的主要把手 */
     #coverWrap { position: relative; flex: none; }
     #cover {
       width: 96px; height: 96px; border-radius: 50%;
@@ -67,8 +69,16 @@
       will-change: height;
     }
 
-    /* ---------------- 右侧歌词 ---------------- */
-    #lyr { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
+    /* ---------------- 右侧歌词 ----------------
+       歌词区必须显式声明 no-drag：在 Windows 上 -webkit-app-region: drag 的区域
+       等于窗口标题栏（非客户区），在它上面点右键会弹出系统菜单（还原 / 移动 /
+       大小 / 最小化 / 最大化 / 关闭），而我们的 contextmenu 监听根本收不到事件
+       —— 于是「右键歌词打开外观面板」永远打不开，只看到那个系统菜单。
+       拖动窗口改由封面和四周留白负责（那两块仍然是 drag）。 */
+    #lyr {
+      flex: 1; min-width: 0; display: flex; flex-direction: column;
+      justify-content: center; gap: 4px; -webkit-app-region: no-drag;
+    }
     .line { white-space: pre-wrap; word-break: break-word; transition: color .2s, opacity .2s; }
     #cur { line-height: 1.26; }
     #nxt { opacity: .48; }
